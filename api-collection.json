@@ -1,0 +1,83 @@
+{
+  "info": {
+    "name": "SMLGOAPI Collection",
+    "description": "REST API endpoints for SMLGOAPI ClickHouse backend with Vector Search (JSON Body)",
+    "version": "1.0.0"
+  },
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "http://localhost:8008/health"
+      }
+    },
+    {
+      "name": "Get All Tables",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "http://localhost:8008/api/tables"
+      }
+    },
+    {
+      "name": "Vector Search Products (English)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"query\": \"coil\",\n  \"limit\": 5,\n  \"offset\": 0\n}"
+        },
+        "url": "http://localhost:8008/search"
+      }
+    },
+    {
+      "name": "Vector Search Products (Thai)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"query\": \"คอยล์\",\n  \"limit\": 3,\n  \"offset\": 0\n}"
+        },
+        "url": "http://localhost:8008/search"
+      }
+    },    {
+      "name": "Vector Search with Pagination",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"query\": \"compressor\",\n  \"limit\": 10,\n  \"offset\": 20\n}"
+        },
+        "url": "http://localhost:8008/search"
+      }
+    },
+    {
+      "name": "API Documentation",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "http://localhost:8008/"
+      }
+    }
+  ]
+}

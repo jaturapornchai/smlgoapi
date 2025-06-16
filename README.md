@@ -1,239 +1,351 @@
-# Enhanced Product Vector Search API
+# SMLGOAPI - ClickHouse REST API Backend with Vector Search
 
-🚀 **Production-ready API server with advanced vector search capabilities, multi-view image processing, and comprehensive ClickHouse integration.**
+REST API backend สำหรับเชื่อมต่อกับ ClickHouse database โดยใช้ Go + Gin framework พร้อม TF-IDF Vector Search
 
-## 🌟 Features
+## 🚀 Features
 
-- **Advanced Vector Search**: TF-IDF based similarity search with Thai/English support
-- **Multi-View Image Processing**: Enhanced accuracy through multiple viewing angles
-- **Real-time SQL Execution**: Direct ClickHouse query execution via REST API
-- **Comprehensive Logging**: Request tracing, performance metrics, and debug modes
-- **Production Ready**: Timeout protection, connection pooling, and health monitoring
+- ✅ RESTful API endpoints
+- ✅ ClickHouse native protocol connection
+- ✅ **TF-IDF Vector Search** - ค้นหาสินค้าด้วย semantic similarity
+- ✅ **Thai/English Text Processing** - รองรับการประมวลผลข้อความทั้งไทยและอังกฤษ
+- ✅ CORS support สำหรับ frontend integration
+- ✅ Enhanced logging with detailed search analytics
+- ✅ Graceful shutdown
+- ✅ Health check endpoint
+- ✅ JSON response format
+- ✅ Error handling
 
-## 🏗️ Architecture
+## 🛠️ Configuration
 
-- **Framework**: Go + Gin
-- **Database**: ClickHouse
-- **Vector Engine**: Custom TF-IDF implementation
-- **Cache**: In-memory with TTL
-- **Concurrency**: Configurable worker pools
+แก้ไขไฟล์ `.env` เพื่อเปลี่ยน configuration:
 
-## 📚 API Endpoints
+```bash
+# Server Configuration
+SERVER_HOST=localhost
+SERVER_PORT=8080
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/` | API status and information |
-| `GET` | `/health` | Health check for monitoring |
-| `GET` | `/help` | Complete API documentation |
-| `POST` | `/search` | Product vector search |
-| `GET` | `/commandget` | SQL execution via GET |
-| `POST` | `/commandpost` | SQL execution via POST |
-| `POST` | `/imgupload` | Image upload & processing |
-| `POST` | `/imgsearch` | Image similarity search |
+# ClickHouse Configuration
+CLICKHOUSE_HOST=161.35.98.110
+CLICKHOUSE_PORT=9000
+CLICKHOUSE_USER=sml2
+CLICKHOUSE_PASSWORD=Md5WyoEwHfR1q6
+CLICKHOUSE_SECURE=false
+CLICKHOUSE_DATABASE=sml2
+```
 
-## 🚀 Quick Start
+## 📁 Project Structure
+
+```
+smlgoapi/
+├── .env                       # Environment configuration
+├── .vscode/
+│   └── tasks.json            # VS Code tasks
+├── config/
+│   └── config.go            # Configuration management
+├── handlers/
+│   └── api.go               # API route handlers (with vector search)
+├── models/
+│   └── models.go            # Data models
+├── services/
+│   ├── clickhouse.go        # ClickHouse service layer
+│   └── vector_db.go         # TF-IDF Vector Database service
+├── main.go                  # Main application entry point
+├── test_clickhouse_legacy.go # Legacy CLI test tool
+├── go.mod                   # Go module dependencies
+└── README.md               # Project documentation
+```
+
+## 🚀 Getting Started
 
 ### Prerequisites
-- Go 1.21+
-- ClickHouse database
-- Git
+
+- Go 1.21 หรือสูงกว่า
+- การเชื่อมต่อกับ ClickHouse server
 
 ### Installation
 
-1. **Clone the repository**
+1. Clone หรือ download โปรเจค
+2. ติดตั้ง dependencies:
+   ```bash
+   go mod tidy
+   ```
+
+### Running the API Server
+
+#### วิธีที่ 1: Run จาก source code
 ```bash
-git clone <repository-url>
-cd smlgoapi
+go run main.go
 ```
 
-2. **Install dependencies**
+#### วิธีที่ 2: Build แล้วรัน executable
 ```bash
-go mod tidy
+# Build
+go build -o smlgoapi.exe main.go
+
+# Run
+./smlgoapi.exe
 ```
 
-3. **Configure environment**
-```bash
-cp .env.example .env
-# Edit .env with your ClickHouse credentials
+#### วิธีที่ 3: ใช้ VS Code Tasks
+- กด `Ctrl+Shift+P` แล้วเลือก "Tasks: Run Task"
+- เลือก "Run SMLGOAPI Server"
+
+Server จะรันที่: **http://localhost:8080**
+
+## 🌐 API Endpoints
+
+### Health Check
+```
+GET /health
+```
+ตรวจสอบสถานะของ API และการเชื่อมต่อ database
+
+### Vector Search (⭐ NEW!)
+```
+POST /search
+Content-Type: application/json
+
+{
+  "query": "motor",
+  "limit": 10,
+  "offset": 0
+}
+```
+ค้นหาสินค้าด้วย TF-IDF Vector Similarity
+
+**JSON Body Parameters:**
+- `query` (required): คำค้นหา (รองรับไทย/อังกฤษ)
+- `limit` (optional): จำนวนผลลัพธ์ (default: 10, max: 100)
+- `offset` (optional): เริ่มต้นจากผลลัพธ์ที่ (default: 0)
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Search completed successfully",
+  "data": {
+    "data": [
+      {
+        "id": "000123",
+        "name": "COIL OEM BENZ SPRINTER",
+        "similarity_score": 0.856,
+        "metadata": {
+          "code": "000123",
+          "unit": "ใบ",
+          "balance_qty": 2.0,
+          "supplier_code": "ซ034"
+        }
+      }
+    ],
+    "total_count": 150,
+    "query": "coil",
+    "duration_ms": 45.2
+  }
+}
 ```
 
-4. **Run the server**
-```bash
-go run .
+### Database Information
+```
+GET /api/tables
+```
+ดึงรายชื่อตารางทั้งหมดในฐานข้อมูล
+
+## 📋 API Response Format
+
+### Standard Response
+```json
+{
+  "success": true,
+  "message": "Operation completed successfully",
+  "data": {...}
+}
 ```
 
-The server will start on `http://localhost:8008`
-
-## ⚙️ Configuration
-
-Create a `.env` file with your settings:
-
-```env
-# ClickHouse Configuration
-CLICKHOUSE_HOST=your-clickhouse-host
-CLICKHOUSE_PORT=9000
-CLICKHOUSE_USER=your-username
-CLICKHOUSE_PASSWORD=your-password
-CLICKHOUSE_DATABASE=your-database
-
-# Server Configuration
-PORT=8008
-GIN_MODE=release
-
-# Debug Configuration
-DEBUG_MODE=true
-DEBUG_LEVEL=4
-LOG_STEP_BY_STEP=true
-LOG_SQL_EXECUTION=true
-LOG_REQUEST_RESPONSE=true
-LOG_PERFORMANCE=true
-
-# Performance Configuration
-MAX_WORKERS=100
-SIMILARITY_THRESHOLD=0.25
-CACHE_ENABLED=true
-CACHE_TTL_MINUTES=15
+### Error Response
+```json
+{
+  "success": false,
+  "error": "Error message description"
+}
 ```
 
-## 📖 API Documentation
+## 🔍 Vector Search Features
 
-### Product Search
+### Text Processing
+- **Thai Text**: ใช้ GSE (Go Segmenter Engine) สำหรับการตัดคำภาษาไทย
+- **English Text**: ใช้ Snowball Stemming Algorithm
+- **Multi-language**: ตรวจจับภาษาอัตโนมัติ
+
+### TF-IDF Algorithm
+- **Term Frequency (TF)**: ความถี่ของคำในเอกสาร
+- **Inverse Document Frequency (IDF)**: น้ำหนักความสำคัญของคำ
+- **Cosine Similarity**: การคำนวณความคล้ายคลึงระหว่าง vectors
+
+### Search Analytics
+- Real-time logging ของการค้นหา
+- ระยะเวลาการประมวลผล
+- จำนวนผลลัพธ์และ similarity scores
+- การตรวจจับภาษา
+
+## 📊 Sample API Calls
+
+### Using PowerShell
+
+**Note**: Search endpoint uses GET method with base64 encoded JSON parameters. All parameters (query, limit, offset) are packed into a JSON object and encoded as base64.
+
+```powershell
+# Health check
+Invoke-RestMethod -Uri "http://localhost:8080/health" -Method GET
+
+# Get tables
+Invoke-RestMethod -Uri "http://localhost:8008/api/tables" -Method GET
+
+# Vector search (English) - POST with JSON body
+$searchBody = @{
+    query = "coil"
+    limit = 5
+    offset = 0
+} | ConvertTo-Json
+Invoke-RestMethod -Uri "http://localhost:8008/search" -Method POST -Body $searchBody -ContentType "application/json"
+
+# Vector search (Thai) - POST with JSON body
+$searchBody = @{
+    query = "คอยล์"
+    limit = 3
+    offset = 0
+} | ConvertTo-Json
+Invoke-RestMethod -Uri "http://localhost:8008/search" -Method POST -Body $searchBody -ContentType "application/json"
+
+# Search with pagination
+$searchBody = @{
+    query = "compressor"
+    limit = 10
+    offset = 20
+} | ConvertTo-Json
+Invoke-RestMethod -Uri "http://localhost:8008/search" -Method POST -Body $searchBody -ContentType "application/json"
+```
+
+### Using curl
+
+**Note**: Uses POST method with JSON body.
+
 ```bash
-curl -X POST "http://localhost:8008/search" \
+# Vector search (English)
+curl -X POST http://localhost:8008/search \
   -H "Content-Type: application/json" \
-  -d '{
-    "query": "brake pad ผ้าเบรค",
-    "limit": 10,
-    "offset": 0
-  }'
-```
+  -d '{"query":"coil","limit":5,"offset":0}'
 
-### SQL Command Execution
-```bash
-# GET method with base64 encoded query
-curl -X GET "http://localhost:8008/commandget?q=$(echo 'SELECT 1' | base64)"
-
-# POST method with JSON payload
-curl -X POST "http://localhost:8008/commandpost" \
+# Vector search (Thai)
+curl -X POST http://localhost:8008/search \
   -H "Content-Type: application/json" \
-  -d '{
-    "query_base64": "'$(echo 'SELECT now()' | base64)'"
-  }'
+  -d '{"query":"คอยล์","limit":3,"offset":0}'
+
+# Search with pagination
+curl -X POST http://localhost:8008/search \
+  -H "Content-Type: application/json" \```
+
+### Using JavaScript (Frontend)
+
+**Note**: Uses POST method with JSON body.
+
+```javascript
+// Helper function to search
+async function searchProducts(query, limit = 10, offset = 0) {
+  const searchBody = {
+    query: query,
+    limit: limit,
+    offset: offset
+  };
+  
+  const response = await fetch('http://localhost:8008/search', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(searchBody)
+  });
+  
+  return await response.json();
+}
+
+// Vector search (English)
+searchProducts('coil', 5, 0)
+  .then(data => {
+    console.log('Search results:', data.data.data);
+    console.log('Total found:', data.data.total_count);
+    console.log('Duration:', data.data.duration_ms + 'ms');
+  });
+
+// Advanced search with Thai
+searchProducts('คอมเพรสเซอร์', 10, 0)
+  .then(data => console.log(data));
+
+// Search with special characters and symbols
+searchProducts('AC/DC Motor 220V 50Hz', 5, 0)
+  .then(data => console.log(data));
+
+// Advanced usage with error handling
+async function advancedSearch(query, limit = 10, offset = 0) {
+  try {
+    const data = await searchProducts(query, limit, offset);
+    if (data.success) {
+      console.log(`Found ${data.data.total_count} results in ${data.data.duration_ms}ms`);
+      return data.data.data;
+    } else {
+      console.error('Search failed:', data.error);
+      return [];
+    }
+  } catch (error) {
+    console.error('Search error:', error);
+    return [];
+  }
+}
+
+// Usage
+advancedSearch('bearing', 5).then(results => console.log(results));
 ```
 
-### Image Upload & Search
+## 🔧 Dependencies
+
+- [gin-gonic/gin](https://github.com/gin-gonic/gin) - HTTP web framework
+- [gin-contrib/cors](https://github.com/gin-contrib/cors) - CORS middleware
+- [clickhouse-go/v2](https://github.com/ClickHouse/clickhouse-go) - ClickHouse driver
+- [joho/godotenv](https://github.com/joho/godotenv) - Environment variables loader
+- [go-ego/gse](https://github.com/go-ego/gse) - Go Segmenter Engine (Thai text processing)
+- [kljensen/snowball](https://github.com/kljensen/snowball) - Snowball stemming algorithm
+
+## 🔍 Development Tools
+
+### Legacy CLI Test Tool
 ```bash
-# Upload image
-curl -X POST "http://localhost:8008/imgupload" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "barcode": "ABC123456789",
-    "imagenumber": 1,
-    "image_data": "base64-encoded-image-data",
-    "use_multi_view": true
-  }'
-
-# Search similar images
-curl -X POST "http://localhost:8008/imgsearch" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "image_data": "base64-encoded-query-image",
-    "limit": 5,
-    "similarity_threshold": 0.8
-  }'
+go run test_clickhouse_legacy.go
 ```
+รันเครื่องมือทดสอบแบบ CLI (สำหรับ debug)
 
-## 🔧 Development
+## 📝 Notes
 
-### Code Structure
-```
-├── main.go                    # Main server and configuration
-├── handler_root.go           # Root endpoint handler
-├── handler_health.go         # Health check handler
-├── handler_help.go           # API documentation handler
-├── handler_search.go         # Product search handler
-├── handler_command_get.go    # SQL GET command handler
-├── handler_command_post.go   # SQL POST command handler
-├── handler_image_upload.go   # Image upload handler
-├── handler_image_search.go   # Image search handler
-├── handler_utils.go          # Shared utility functions
-├── go.mod                    # Go module dependencies
-└── API_TEST_RESULTS.md       # Test results documentation
-```
+- API รองรับ CORS สำหรับการเชื่อมต่อจาก frontend
+- ใช้ native ClickHouse protocol (port 9000)
+- Response เป็น JSON format
+- Vector search ใช้ TF-IDF algorithm พร้อม cosine similarity
+- รองรับการประมวลผลข้อความไทยและอังกฤษ
+- มี enhanced logging สำหรับ search analytics
+- มี graceful shutdown เมื่อปิด server
+- Error handling ครอบคลุม
 
-### Running Tests
-```bash
-# Test all endpoints
-powershell -ExecutionPolicy Bypass -File test_all_apis.ps1
+## 🚀 Ready for Frontend Integration!
 
-# Test individual endpoints
-powershell -ExecutionPolicy Bypass -File test_search.ps1
-powershell -ExecutionPolicy Bypass -File test_health.ps1
-```
+API พร้อมให้ frontend frameworks เชื่อมต่อ เช่น:
+- React.js
+- Vue.js  
+- Angular
+- Next.js
+- หรือ vanilla JavaScript
 
-### Debug Mode
-Enable comprehensive debugging:
-```bash
-DEBUG_MODE=true
-DEBUG_LEVEL=5
-LOG_STEP_BY_STEP=true
-go run .
-```
+**Base URL:** `http://localhost:8080`
 
-## 🌐 Production Deployment
-
-### Docker (Optional)
-```bash
-# Build image
-docker build -t smlgoapi .
-
-# Run container
-docker run -p 8008:8008 --env-file .env smlgoapi
-```
-
-### Systemd Service
-```bash
-# Copy binary to /usr/local/bin/
-sudo cp smlgoapi /usr/local/bin/
-
-# Create systemd service
-sudo systemctl enable smlgoapi
-sudo systemctl start smlgoapi
-```
-
-## 📊 Monitoring
-
-- **Health Check**: `GET /health`
-- **Metrics**: Performance metrics available in debug mode
-- **Logs**: Structured logging with request tracing
-- **Debug Traces**: `GET /debug/trace` (when debug mode enabled)
-
-## 🛡️ Security
-
-- Input validation and sanitization
-- SQL injection prevention
-- Request timeout protection
-- Rate limiting ready (configurable)
-- Secure base64 encoding for SQL commands
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 📞 Support
-
-- **Documentation**: Visit `/help` endpoint for complete API documentation
-- **Issues**: Use GitHub Issues for bug reports and feature requests
-- **Debug**: Enable debug mode for detailed logging and troubleshooting
-
----
-
-⭐ **Star this repository if you find it useful!**
+### ⭐ Vector Search Highlights:
+- **Intelligent Search**: ค้นหาด้วย semantic similarity แทนการค้นหาแบบ exact match
+- **Multi-language Support**: รองรับภาษาไทยและอังกฤษ
+- **Real-time Analytics**: logging รายละเอียดการค้นหาแบบ real-time
+- **High Performance**: TF-IDF algorithm ที่ได้รับการปรับปรุงสำหรับ performance
