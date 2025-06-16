@@ -1,10 +1,12 @@
 package services
 
 import (
+	"bytes"
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
 	"image"
+	"image/gif"
 	"image/jpeg"
 	"image/png"
 	"io"
@@ -15,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -27,6 +30,8 @@ type ImageProxy struct {
 	cacheDir       string
 	maxSize        int64 // Maximum file size in bytes
 	allowedDomains []string
+	mutex          sync.RWMutex
+	inFlight       map[string]bool
 }
 
 func NewImageProxy() *ImageProxy {
@@ -37,47 +42,12 @@ func NewImageProxy() *ImageProxy {
 	} else {
 		log.Printf("📁 [imgproxy] Cache directory ready: %s", cacheDir)
 	}
-
 	return &ImageProxy{
-		cache:    cache.New(24*time.Hour, 1*time.Hour),
-		cacheDir: cacheDir,
-		maxSize:  10 * 1024 * 1024, // 10MB
-		allowedDomains: []string{
-			"f.ptcdn.info",
-			"images.unsplash.com",
-			"cdn.pixabay.com",
-			"picsum.photos",
-			"httpbin.org",         // For testing
-			"via.placeholder.com", // For testing/placeholder
-			"placeholder.com",     // For testing/placeholder
-			"placehold.it",        // For testing/placeholder
-			"dummyimage.com",      // For testing/placeholder
-			// Thai e-commerce domains
-			"pics.tarad.com",
-			"shopping.mthai.com",
-			"cf.shopee.co.th",
-			"images.tokopedia.net",
-			"ecs7.tokopedia.net",
-			"static.wixstatic.com",
-			"img.lazcdn.com",
-			"lzd-img-global.slatic.net",
-			"shopee.co.th",
-			"img.alicdn.com",
-			"ae01.alicdn.com",
-			"s.alicdn.com",
-			// General e-commerce and CDN domains
-			"cdn.shopify.com",
-			"assets.website-files.com",
-			"images.squarespace-cdn.com",
-			"ssl-images-amazon.com",
-			"m.media-amazon.com",
-			"images-na.ssl-images-amazon.com",
-			// Additional CDN domains
-			"fastly.com",
-			"cloudfront.net",
-			"amazonaws.com",
-			"cloudflare.com",
-		},
+		cache:          cache.New(24*time.Hour, 1*time.Hour),
+		cacheDir:       cacheDir,
+		maxSize:        10 * 1024 * 1024, // 10MB
+		allowedDomains: []string{},       // Empty array = allow all domains
+		inFlight:       make(map[string]bool),
 	}
 }
 
@@ -108,6 +78,109 @@ func (ip *ImageProxy) getCacheKey(imageURL string, width, height int) string {
 
 func (ip *ImageProxy) getCacheFilePath(cacheKey string) string {
 	return filepath.Join(ip.cacheDir, cacheKey)
+}
+
+// HeadHandler handles HEAD requests for image proxy
+func (ip *ImageProxy) HeadHandler(c *gin.Context) {
+	imageURL := c.Query("url")
+	log.Printf("🔍 [imgproxy-head] Request URL: %s", imageURL)
+
+	if imageURL == "" {
+		log.Printf("❌ [imgproxy-head] Empty URL - returning 400")
+		c.Status(http.StatusBadRequest)
+		return
+	}
+
+	// Check domain
+	if !ip.isAllowedDomain(imageURL) {
+		log.Printf("❌ [imgproxy-head] Domain not allowed for URL: %s - returning 403", imageURL)
+		c.Status(http.StatusForbidden)
+		return
+	}
+
+	log.Printf("✅ [imgproxy-head] Domain allowed for URL: %s", imageURL)
+
+	// Get resize parameters
+	widthStr := c.Query("w")
+	heightStr := c.Query("h")
+
+	var width, height int
+	var err error
+
+	if widthStr != "" {
+		width, err = strconv.Atoi(widthStr)
+		if err != nil || width <= 0 || width > 2000 {
+			c.Status(http.StatusBadRequest)
+			return
+		}
+	}
+
+	if heightStr != "" {
+		height, err = strconv.Atoi(heightStr)
+		if err != nil || height <= 0 || height > 2000 {
+			c.Status(http.StatusBadRequest)
+			return
+		}
+	}
+	// Generate cache key
+	cacheKey := ip.getCacheKey(imageURL, width, height)
+	cacheFilePath := ip.getCacheFilePath(cacheKey)
+	log.Printf("🔍 [imgproxy-head] Cache key: %s, Cache path: %s", cacheKey, cacheFilePath)
+
+	// Check if cached file exists
+	if info, err := os.Stat(cacheFilePath); err == nil {
+		// File exists, set appropriate headers
+		log.Printf("✅ [imgproxy-head] Found in cache: %s (size: %d bytes)", cacheFilePath, info.Size())
+		contentType := ip.getContentType(cacheFilePath)
+		c.Header("Content-Type", contentType)
+		c.Header("Content-Length", fmt.Sprintf("%d", info.Size()))
+		c.Header("Cache-Control", "public, max-age=86400")
+		c.Status(http.StatusOK)
+		return
+	}
+	log.Printf("🔍 [imgproxy-head] Not in cache, checking remote URL: %s", imageURL)
+
+	// Check if we can fetch the original image (HEAD request)
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	req, err := http.NewRequest("HEAD", imageURL, nil)
+	if err != nil {
+		log.Printf("❌ [imgproxy-head] Failed to create HEAD request: %v", err)
+		c.Status(http.StatusBadRequest)
+		return
+	}
+
+	req.Header.Set("User-Agent", "SMLGOAPI-ImageProxy/1.0")
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("❌ [imgproxy-head] Failed to fetch remote URL: %v", err)
+		c.Status(http.StatusNotFound)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("❌ [imgproxy-head] Remote server returned status: %d", resp.StatusCode)
+		c.Status(resp.StatusCode)
+		return
+	}
+
+	log.Printf("✅ [imgproxy-head] Remote image exists, status: %d", resp.StatusCode)
+
+	// Image exists, set headers and return 200
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "image/jpeg"
+	}
+
+	c.Header("Content-Type", contentType)
+	if contentLength := resp.Header.Get("Content-Length"); contentLength != "" {
+		c.Header("Content-Length", contentLength)
+	}
+	c.Header("Cache-Control", "public, max-age=86400")
+	c.Status(http.StatusOK)
 }
 
 func (ip *ImageProxy) ProxyHandler(c *gin.Context) {
@@ -149,6 +222,39 @@ func (ip *ImageProxy) ProxyHandler(c *gin.Context) {
 		}
 	}
 
+	// Generate cache key
+	cacheKey := ip.getCacheKey(imageURL, width, height)
+
+	// Check if already processing this image
+	ip.mutex.Lock()
+	if ip.inFlight[cacheKey] {
+		ip.mutex.Unlock()
+		// Wait a bit and retry
+		time.Sleep(100 * time.Millisecond)
+		ip.mutex.RLock()
+		processing := ip.inFlight[cacheKey]
+		ip.mutex.RUnlock()
+
+		if processing {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"success": false,
+				"error":   "Image is being processed, please try again",
+			})
+			return
+		}
+	} else {
+		ip.inFlight[cacheKey] = true
+		ip.mutex.Unlock()
+
+		// Ensure cleanup
+		defer func() {
+			ip.mutex.Lock()
+			delete(ip.inFlight, cacheKey)
+			ip.mutex.Unlock()
+		}()
+	}
+
+	// Check domain permissions
 	// Validate URL
 	parsedURL, err := url.Parse(imageURL)
 	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
@@ -163,12 +269,10 @@ func (ip *ImageProxy) ProxyHandler(c *gin.Context) {
 	if !ip.isAllowedDomain(imageURL) {
 		c.JSON(http.StatusForbidden, gin.H{
 			"success": false,
-			"error":   "Domain not allowed",
-		})
+			"error":   "Domain not allowed"})
 		return
 	}
 
-	cacheKey := ip.getCacheKey(imageURL, width, height)
 	cacheFilePath := ip.getCacheFilePath(cacheKey)
 
 	// Check if cached file exists and is recent
@@ -368,15 +472,19 @@ func (ip *ImageProxy) resizeImage(imageData []byte, targetWidth, targetHeight in
 	resized := image.NewRGBA(image.Rect(0, 0, newWidth, newHeight))
 
 	// Resize using high-quality algorithm
-	draw.CatmullRom.Scale(resized, resized.Bounds(), img, bounds, draw.Over, nil)
-
-	// Encode to bytes
-	var buf strings.Builder
+	draw.CatmullRom.Scale(resized, resized.Bounds(), img, bounds, draw.Over, nil) // Encode to bytes
+	var buf bytes.Buffer
 	switch format {
 	case "jpeg":
 		err = jpeg.Encode(&buf, resized, &jpeg.Options{Quality: 90})
 	case "png":
 		err = png.Encode(&buf, resized)
+	case "gif":
+		err = gif.Encode(&buf, resized, nil)
+	case "webp":
+		// WebP encoding (note: webp package doesn't export Encode in some versions)
+		// Fallback to JPEG for WebP
+		err = jpeg.Encode(&buf, resized, &jpeg.Options{Quality: 90})
 	default:
 		// Default to JPEG for unknown formats
 		err = jpeg.Encode(&buf, resized, &jpeg.Options{Quality: 90})
@@ -386,7 +494,7 @@ func (ip *ImageProxy) resizeImage(imageData []byte, targetWidth, targetHeight in
 		return nil, fmt.Errorf("failed to encode resized image: %v", err)
 	}
 
-	return []byte(buf.String()), nil
+	return buf.Bytes(), nil
 }
 
 func (ip *ImageProxy) calculateDimensions(originalWidth, originalHeight, targetWidth, targetHeight int) (int, int) {

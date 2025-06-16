@@ -877,8 +877,8 @@ class ProductCard extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
+      );
+    }
   }
 }
 ```
@@ -1406,3 +1406,85 @@ docker container prune
 # Cleanup images ที่ไม่ใช้
 docker image prune -a
 ```
+
+## 🐳 Docker & GitHub Actions
+
+### 📦 Building with Docker
+
+This project includes a multi-stage Dockerfile for efficient container builds:
+
+#### Local Development with Docker Compose
+
+1. **Start the full stack (API + ClickHouse)**
+   ```bash
+   docker-compose up -d
+   ```
+
+2. **View logs**
+   ```bash
+   docker-compose logs -f smlgoapi
+   ```
+
+3. **Stop services**
+   ```bash
+   docker-compose down
+   ```
+
+#### Manual Docker Build
+
+```bash
+# Build the image
+docker build -t smlgoapi:latest .
+
+# Run with external ClickHouse
+docker run -d \
+  --name smlgoapi \
+  -p 8080:8080 \
+  -e CLICKHOUSE_HOST=your-clickhouse-host \
+  -e CLICKHOUSE_USER=your-user \
+  -e CLICKHOUSE_PASSWORD=your-password \
+  -e CLICKHOUSE_DATABASE=your-database \
+  -v $(pwd)/image_cache:/app/image_cache \
+  smlgoapi:latest
+```
+
+### 🚀 GitHub Actions CI/CD
+
+The project includes automated Docker image building and publishing to GitHub Container Registry (GHCR):
+
+#### Automated Builds
+- **Push to `main`**: Builds and pushes `latest` tag
+- **Push to `develop`**: Builds and pushes `develop` tag  
+- **Git tags (`v*`)**: Builds and pushes semantic version tags
+- **Pull Requests**: Builds image without pushing (validation)
+
+#### Using Published Images
+
+Pull the latest image from GHCR:
+```bash
+# Latest stable version
+docker pull ghcr.io/your-username/smlgoapi:latest
+
+# Development version
+docker pull ghcr.io/your-username/smlgoapi:develop
+
+# Specific version
+docker pull ghcr.io/your-username/smlgoapi:v1.0.0
+```
+
+#### Security Features
+- Multi-architecture builds (amd64, arm64)
+- Vulnerability scanning with Trivy
+- Non-root user execution
+- Minimal Alpine-based final image
+- Security scan results in GitHub Security tab
+
+#### Repository Setup
+
+To enable GitHub Actions deployment to GHCR:
+
+1. **Enable GitHub Actions** (usually enabled by default)
+2. **Set repository visibility** to public, or configure package permissions for private repos
+3. **Push your code** - GitHub Actions will automatically build and push images
+
+The workflow file is located at `.github/workflows/docker-build.yml`

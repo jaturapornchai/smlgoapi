@@ -213,3 +213,15 @@ func (h *APIHandler) SearchProducts(c *gin.Context) {
 func (h *APIHandler) ImageProxy(c *gin.Context) {
 	h.imageProxyService.ProxyHandler(c)
 }
+
+// ImageProxyHead godoc
+// @Summary HEAD request for image proxy
+// @Description Check if image exists without downloading content
+// @Tags proxy
+// @Param url query string true "Image URL to check"
+// @Success 200 "Image exists"
+// @Success 404 "Image not found"
+// @Router /imgproxy [head]
+func (h *APIHandler) ImageProxyHead(c *gin.Context) {
+	h.imageProxyService.HeadHandler(c)
+}

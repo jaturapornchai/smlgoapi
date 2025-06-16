@@ -98,10 +98,9 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 
 	// Search endpoint
 	router.POST("/search", apiHandler.SearchProducts)
-
 	// Image proxy endpoint (GET and HEAD)
 	router.GET("/imgproxy", apiHandler.ImageProxy)
-	router.HEAD("/imgproxy", apiHandler.ImageProxy)
+	router.HEAD("/imgproxy", apiHandler.ImageProxyHead)
 
 	// API routes
 	api := router.Group("/api")

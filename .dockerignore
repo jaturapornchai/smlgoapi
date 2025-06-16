@@ -1,38 +1,39 @@
-# Development files
+# Git
 .git
 .gitignore
-README.md
-*.md
 
-# Test files
-*_test.go
-test/
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
 
 # Build artifacts
 smlgoapi.exe
 smlgoapi
 *.exe
 
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Logs
-*.log
-
-# Cache (will be created in container)
-image_cache/
-
-# Local configuration
+# Environment files
+.env
 .env.local
-.env.development
+.env.production
+
+# Test files
+*_test.go
+test_*.go
 
 # Documentation
-docs/
-*.pdf
+README.md
+*.md
 
-# Temporary files
+# Cache directories
+image_cache/*
+!image_cache/.gitkeep
+
+# GitHub
+.github
+
+# Other
+*.log
 tmp/
 temp/

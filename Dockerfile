@@ -1,13 +1,13 @@
-# Multi-stage build for Go application
-FROM golang:1.23-alpine AS builder
+# Build stage
+FROM golang:1.24-alpine AS builder
 
-# Install git for go modules
-RUN apk add --no-cache git
+# Install git and ca-certificates (needed for fetching dependencies)
+RUN apk add --no-cache git ca-certificates
 
 # Set working directory
 WORKDIR /app
 
-# Copy go mod files
+# Copy go mod and sum files
 COPY go.mod go.sum ./
 
 # Download dependencies
@@ -25,17 +25,22 @@ FROM alpine:latest
 # Install ca-certificates for HTTPS requests
 RUN apk --no-cache add ca-certificates
 
-# Create app directory
-WORKDIR /root/
+# Create non-root user
+RUN addgroup -g 1001 -S appgroup && \
+    adduser -u 1001 -S appuser -G appgroup
 
-# Copy the binary from builder stage
+# Set working directory
+WORKDIR /app
+
+# Copy binary from builder stage
 COPY --from=builder /app/smlgoapi .
 
-# Copy .env file (optional, can also use environment variables)
-COPY --from=builder /app/.env .env
+# Create image_cache directory and set ownership
+RUN mkdir -p /app/image_cache && \
+    chown -R appuser:appgroup /app
 
-# Create cache directory
-RUN mkdir -p /root/image_cache
+# Change to non-root user
+USER appuser
 
 # Expose port
 EXPOSE 8080
