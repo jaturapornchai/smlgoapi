@@ -14,6 +14,8 @@ help:
 	@echo "  make docker-build - Build Docker image"
 	@echo "  make docker-run  - Run Docker container"
 	@echo "  make deploy      - Deploy using Git"
+	@echo "  make deploy-prod - Deploy to production server"
+	@echo "  make deploy-full - Full deployment (Git + Production)"
 
 # Git deployment
 .PHONY: deploy
@@ -23,6 +25,21 @@ deploy:
 	git commit -m "Deploying the latest changes"
 	git push
 	@echo "Deployment completed!"
+
+# Production deployment
+.PHONY: deploy-prod
+deploy-prod:
+	@echo "Deploying to production server..."
+	@echo "Connecting to production server and pulling latest image..."
+	ssh root@143.198.192.64 "cd /data/vectorapi-dev/ && docker pull ghcr.io/smlsoft/vectordbapi:main && docker compose up -d"
+	@echo "Production deployment completed!"
+
+# Full deployment (Git + Production)
+.PHONY: deploy-full
+deploy-full: deploy
+	@echo "Waiting 10 seconds for CI/CD to build image..."
+	sleep 10
+	@make deploy-prod
 
 # Docker commands for production
 .PHONY: docker-build

@@ -2,9 +2,9 @@
 
 REST API backend สำหรับเชื่อมต่อกับ ClickHouse database โดยใช้ Go + Gin framework พร้อม TF-IDF Vector Search
 
-## � Git Deployment Guide
+## 🚀 Git Deployment Guide
 
-### � การ Deploy ด้วย Git
+### 📋 การ Deploy ด้วย Git
 
 #### วิธีการ Deploy แบบ Traditional
 
@@ -28,6 +28,61 @@ REST API backend สำหรับเชื่อมต่อกับ ClickHou
    ```bash
    git push
    ```
+
+5. **Deploy ไปยัง Production Server**
+   ```bash
+   # เชื่อมต่อไปยัง production server
+   ssh root@143.198.192.64
+   
+   # เข้าไปยังโฟลเดอร์โปรเจค
+   cd /data/vectorapi-dev/
+   
+   # ดึง Docker image ล่าสุดจาก registry
+   docker pull ghcr.io/smlsoft/vectordbapi:main
+   
+   # รีสตาร์ท containers
+   docker compose up -d
+   ```
+
+### 🛠️ การตั้งค่า Production Environment
+
+สำหรับการ deploy ไปยัง production server:
+
+1. **ตรวจสอบการเชื่อมต่อ SSH**
+   ```bash
+   ssh root@143.198.192.64 "docker --version"
+   ```
+
+2. **ตรวจสอบสถานะ containers**
+   ```bash
+   ssh root@143.198.192.64 "cd /data/vectorapi-dev/ && docker compose ps"
+   ```
+
+3. **ดู logs การทำงาน**
+   ```bash
+   ssh root@143.198.192.64 "cd /data/vectorapi-dev/ && docker compose logs -f"
+   ```
+
+4. **Restart services (หากจำเป็น)**
+   ```bash
+   ssh root@143.198.192.64 "cd /data/vectorapi-dev/ && docker compose restart"
+   ```
+
+### 📦 Deploy Command Summary
+
+```bash
+# Local: Push code changes
+git add .
+git commit -m "Update features"
+git push
+
+# Production: Deploy to server
+ssh root@143.198.192.64
+cd /data/vectorapi-dev/
+docker pull ghcr.io/smlsoft/vectordbapi:main
+docker compose up -d
+exit
+```
 
 ### 🔧 Production Deployment
 
