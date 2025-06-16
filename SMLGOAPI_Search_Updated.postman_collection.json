@@ -1,0 +1,531 @@
+{
+    "info": {
+        "_postman_id": "updated-search-collection",
+        "name": "SMLGOAPI Search - Updated",
+        "description": "Comprehensive API collection for the updated SMLGOAPI search endpoint with flattened response format",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+        {
+            "name": "Search Examples",
+            "item": [
+                {
+                    "name": "1. Search by Exact Product Code",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test(\"Status code is 200\", function () {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "",
+                                    "pm.test(\"Response has success true\", function () {",
+                                    "    var jsonData = pm.response.json();",
+                                    "    pm.expect(jsonData.success).to.eql(true);",
+                                    "});",
+                                    "",
+                                    "pm.test(\"Response contains search results\", function () {",
+                                    "    var jsonData = pm.response.json();",
+                                    "    pm.expect(jsonData.data).to.have.property('data');",
+                                    "    pm.expect(jsonData.data).to.have.property('total_count');",
+                                    "    pm.expect(jsonData.data).to.have.property('query');",
+                                    "    pm.expect(jsonData.data).to.have.property('duration_ms');",
+                                    "});",
+                                    "",
+                                    "pm.test(\"Search result has flattened structure\", function () {",
+                                    "    var jsonData = pm.response.json();",
+                                    "    if (jsonData.data.data.length > 0) {",
+                                    "        var result = jsonData.data.data[0];",
+                                    "        pm.expect(result).to.have.property('id');",
+                                    "        pm.expect(result).to.have.property('name');",
+                                    "        pm.expect(result).to.have.property('similarity_score');",
+                                    "        pm.expect(result).to.have.property('code');",
+                                    "        pm.expect(result).to.have.property('balance_qty');",
+                                    "        pm.expect(result).to.have.property('price');",
+                                    "        pm.expect(result).to.have.property('supplier_code');",
+                                    "        pm.expect(result).to.have.property('unit');",
+                                    "        pm.expect(result).to.have.property('img_url');",
+                                    "        pm.expect(result).to.have.property('search_priority');",
+                                    "        pm.expect(result).to.not.have.property('metadata');",
+                                    "    }",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"query\": \"07-1151\",\n  \"limit\": 5\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/search",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "search"
+                            ]
+                        },
+                        "description": "Search for exact product code. This should return the highest priority results (search_priority: 1)"
+                    },
+                    "response": []
+                },
+                {
+                    "name": "2. Search by Partial Product Code",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"query\": \"1151\",\n  \"limit\": 10\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/search",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "search"
+                            ]
+                        },
+                        "description": "Search for partial product code. Should return all products containing '1151' in their codes."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "3. Search by Product Name",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"query\": \"water\",\n  \"limit\": 5\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/search",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "search"
+                            ]
+                        },
+                        "description": "Search by product name. Should return products with 'water' in their names (search_priority: 2)"
+                    },
+                    "response": []
+                },
+                {
+                    "name": "4. Search Thai Product Name",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"query\": \"น้ำ\",\n  \"limit\": 5\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/search",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "search"
+                            ]
+                        },
+                        "description": "Search using Thai characters for product names containing 'น้ำ' (water)"
+                    },
+                    "response": []
+                },
+                {
+                    "name": "5. Semantic Vector Search",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"query\": \"beverage\",\n  \"limit\": 8\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/search",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "search"
+                            ]
+                        },
+                        "description": "Semantic search that should trigger vector search (search_priority: 3) for related products"
+                    },
+                    "response": []
+                },
+                {
+                    "name": "6. Search with Pagination",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"query\": \"item\",\n  \"limit\": 5,\n  \"offset\": 10\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/search",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "search"
+                            ]
+                        },
+                        "description": "Search with pagination - get results 11-15 (offset 10, limit 5)"
+                    },
+                    "response": []
+                },
+                {
+                    "name": "7. Large Limit Search",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"query\": \"product\",\n  \"limit\": 50\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/search",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "search"
+                            ]
+                        },
+                        "description": "Search with larger result limit to test performance and priority sorting"
+                    },
+                    "response": []
+                }
+            ],
+            "description": "Collection of search examples demonstrating different search types and priority levels"
+        },
+        {
+            "name": "Priority Testing",
+            "item": [
+                {
+                    "name": "Mixed Priority Search",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"query\": \"07\",\n  \"limit\": 15\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/search",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "search"
+                            ]
+                        },
+                        "description": "Search that should trigger multiple search methods and demonstrate priority sorting"
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Code vs Name Priority Test",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"query\": \"water\",\n  \"limit\": 10\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/search",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "search"
+                            ]
+                        },
+                        "description": "Test to see if code matches are prioritized over name matches for the same term"
+                    },
+                    "response": []
+                }
+            ],
+            "description": "Tests to verify the priority system is working correctly"
+        },
+        {
+            "name": "Error Cases",
+            "item": [
+                {
+                    "name": "Empty Query",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test(\"Status code is 400\", function () {",
+                                    "    pm.response.to.have.status(400);",
+                                    "});",
+                                    "",
+                                    "pm.test(\"Response has success false\", function () {",
+                                    "    var jsonData = pm.response.json();",
+                                    "    pm.expect(jsonData.success).to.eql(false);",
+                                    "});",
+                                    "",
+                                    "pm.test(\"Response contains error message\", function () {",
+                                    "    var jsonData = pm.response.json();",
+                                    "    pm.expect(jsonData).to.have.property('error');",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"query\": \"\",\n  \"limit\": 5\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/search",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "search"
+                            ]
+                        },
+                        "description": "Test with empty query - should return error"
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Missing Query Field",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test(\"Status code is 400\", function () {",
+                                    "    pm.response.to.have.status(400);",
+                                    "});",
+                                    "",
+                                    "pm.test(\"Response has success false\", function () {",
+                                    "    var jsonData = pm.response.json();",
+                                    "    pm.expect(jsonData.success).to.eql(false);",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"limit\": 5\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/search",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "search"
+                            ]
+                        },
+                        "description": "Test without query field - should return error"
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Invalid JSON",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test(\"Status code is 400\", function () {",
+                                    "    pm.response.to.have.status(400);",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"query\": \"test\",\n  \"limit\": 5,\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/search",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "search"
+                            ]
+                        },
+                        "description": "Test with invalid JSON format"
+                    },
+                    "response": []
+                }
+            ],
+            "description": "Error handling test cases"
+        },
+        {
+            "name": "Performance Tests",
+            "item": [
+                {
+                    "name": "Response Time Test",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test(\"Response time is less than 2000ms\", function () {",
+                                    "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+                                    "});",
+                                    "",
+                                    "pm.test(\"Duration in response matches actual time\", function () {",
+                                    "    var jsonData = pm.response.json();",
+                                    "    if (jsonData.success && jsonData.data) {",
+                                    "        pm.expect(jsonData.data.duration_ms).to.be.below(2000);",
+                                    "    }",
+                                    "});"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"query\": \"performance test\",\n  \"limit\": 20\n}"
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/search",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "search"
+                            ]
+                        },
+                        "description": "Test response time performance"
+                    },
+                    "response": []
+                }
+            ],
+            "description": "Performance testing requests"
+        }
+    ],
+    "event": [
+        {
+            "listen": "prerequest",
+            "script": {
+                "type": "text/javascript",
+                "exec": [
+                    ""
+                ]
+            }
+        },
+        {
+            "listen": "test",
+            "script": {
+                "type": "text/javascript",
+                "exec": [
+                    ""
+                ]
+            }
+        }
+    ],
+    "variable": [
+        {
+            "key": "baseUrl",
+            "value": "http://localhost:8008",
+            "type": "string",
+            "description": "Base URL for the SMLGOAPI server"
+        }
+    ]
+}

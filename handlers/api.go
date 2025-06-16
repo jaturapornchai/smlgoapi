@@ -166,21 +166,15 @@ func (h *APIHandler) SearchProducts(c *gin.Context) {
 		for i := 0; i < maxShow; i++ {
 			result := results.Data[i]
 
-			// Extract metadata
-			itemCode := "N/A"
-			if code, ok := result.Metadata["item_code"]; ok {
-				itemCode = fmt.Sprintf("%v", code)
+			// Extract metadata directly from fields
+			itemCode := result.Code
+			if itemCode == "" {
+				itemCode = "N/A"
 			}
 
-			qty := "N/A"
-			if qtyVal, ok := result.Metadata["balance_qty"]; ok {
-				qty = fmt.Sprintf("%.2f", qtyVal)
-			}
+			qty := fmt.Sprintf("%.2f", result.BalanceQty)
 
-			category := "N/A"
-			if cat, ok := result.Metadata["category_name"]; ok {
-				category = fmt.Sprintf("%v", cat)
-			}
+			category := "N/A" // Category not available in current struct
 
 			fmt.Printf("     [search_products] %d. [%s] %s\n", i+1, itemCode, result.Name)
 			fmt.Printf("         └─ Score: %.4f | Qty: %s | Category: %s\n",

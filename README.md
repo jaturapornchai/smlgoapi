@@ -141,15 +141,14 @@ exit
    ```
 
 3. **ตั้งค่าไฟล์ .env** (ถ้าจำเป็น)
-   ```bash
-   # ค่าปัจจุบันทำงานอยู่แล้ว
+   ```bash   # ค่าปัจจุบันทำงานอยู่แล้ว
    SERVER_HOST=0.0.0.0
    SERVER_PORT=8080
    CLICKHOUSE_HOST=161.35.98.110
    CLICKHOUSE_PORT=9000
-   CLICKHOUSE_USER=sml2
-   CLICKHOUSE_PASSWORD=Md5WyoEwHfR1q6
-   CLICKHOUSE_DATABASE=sml2
+   CLICKHOUSE_USER=wawa
+   CLICKHOUSE_PASSWORD=TEGmUnjQuiqjvFMY
+   CLICKHOUSE_DATABASE=datawawa
    ```
 
 4. **รัน Server**
@@ -1177,10 +1176,10 @@ SERVER_PORT=8008
 # ClickHouse Configuration
 CLICKHOUSE_HOST=161.35.98.110
 CLICKHOUSE_PORT=9000
-CLICKHOUSE_USER=sml2
-CLICKHOUSE_PASSWORD=Md5WyoEwHfR1q6
+CLICKHOUSE_USER=wawa
+CLICKHOUSE_PASSWORD=TEGmUnjQuiqjvFMY
 CLICKHOUSE_SECURE=false
-CLICKHOUSE_DATABASE=sml2
+CLICKHOUSE_DATABASE=datawawa
 
 # Application Configuration
 GIN_MODE=release

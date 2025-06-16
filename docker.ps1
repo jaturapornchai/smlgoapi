@@ -30,7 +30,8 @@ function Invoke-Build {
     docker build -t $ImageName .
     if ($LASTEXITCODE -eq 0) {
         Write-Host "✅ Build complete!" -ForegroundColor Green
-    } else {
+    }
+    else {
         Write-Host "❌ Build failed!" -ForegroundColor Red
         exit 1
     }
@@ -44,7 +45,8 @@ function Start-Services {
         Write-Host "📊 API: http://localhost:8080" -ForegroundColor Cyan
         Write-Host "🗄️  ClickHouse: http://localhost:8123" -ForegroundColor Cyan
         Write-Host "💚 Health: http://localhost:8080/health" -ForegroundColor Cyan
-    } else {
+    }
+    else {
         Write-Host "❌ Failed to start services!" -ForegroundColor Red
         exit 1
     }
