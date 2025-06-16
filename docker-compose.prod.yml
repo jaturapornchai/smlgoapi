@@ -1,0 +1,46 @@
+# Production docker-compose for deployment
+version: '3.8'
+
+services:
+  smlgoapi:
+    image: ghcr.io/smlsoft/smlgoapi:main
+    container_name: smlgoapi-prod
+    ports:
+      - "8008:8008"
+    environment:
+      # Server Configuration
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8008
+      
+      # ClickHouse Configuration
+      - CLICKHOUSE_HOST=161.35.98.110
+      - CLICKHOUSE_PORT=9000
+      - CLICKHOUSE_USER=sml2
+      - CLICKHOUSE_PASSWORD=Md5WyoEwHfR1q6
+      - CLICKHOUSE_SECURE=false
+      - CLICKHOUSE_DATABASE=sml2
+      
+      # Application Configuration
+      - GIN_MODE=release
+      - CACHE_DIR=/app/cache
+    volumes:
+      - ./image_cache:/root/image_cache
+      - ./logs:/root/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8008/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - smlgoapi-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  smlgoapi-network:
+    driver: bridge

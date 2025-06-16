@@ -15,13 +15,16 @@ import (
 type APIHandler struct {
 	clickHouseService *services.ClickHouseService
 	vectorDB          *services.TFIDFVectorDatabase
+	imageProxyService *services.ImageProxy
 }
 
 func NewAPIHandler(clickHouseService *services.ClickHouseService) *APIHandler {
 	vectorDB := services.NewTFIDFVectorDatabase(clickHouseService)
+	imageProxyService := services.NewImageProxy()
 	return &APIHandler{
 		clickHouseService: clickHouseService,
 		vectorDB:          vectorDB,
+		imageProxyService: imageProxyService,
 	}
 }
 
@@ -197,4 +200,16 @@ func (h *APIHandler) SearchProducts(c *gin.Context) {
 		Data:    results,
 		Message: "Search completed successfully",
 	})
+}
+
+// ImageProxy godoc
+// @Summary Proxy images with caching
+// @Description Proxy and cache images from external URLs with CORS support
+// @Tags proxy
+// @Produce json,image/jpeg,image/png,image/gif,image/webp
+// @Param url query string true "Image URL to proxy"
+// @Success 200 {file} binary "Image file"
+// @Router /imgproxy [get]
+func (h *APIHandler) ImageProxy(c *gin.Context) {
+	h.imageProxyService.ProxyHandler(c)
 }

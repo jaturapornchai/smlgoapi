@@ -83,20 +83,25 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 	// Middleware
 	router.Use(gin.Logger())
 	router.Use(gin.Recovery())
-
 	// CORS middleware
 	router.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"}, // In production, specify your frontend domain
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
+
 	// Health check endpoint
 	router.GET("/health", apiHandler.HealthCheck)
+
 	// Search endpoint
 	router.POST("/search", apiHandler.SearchProducts)
+
+	// Image proxy endpoint (GET and HEAD)
+	router.GET("/imgproxy", apiHandler.ImageProxy)
+	router.HEAD("/imgproxy", apiHandler.ImageProxy)
 
 	// API routes
 	api := router.Group("/api")
@@ -104,15 +109,16 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 		// Database routes
 		api.GET("/tables", apiHandler.GetTables)
 	}
-
 	// API documentation endpoint
 	router.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"message": "SMLGOAPI - ClickHouse REST API",
-			"version": "1.0.0", "endpoints": gin.H{
-				"health": "/health",
-				"search": "POST /search",
-				"tables": "/api/tables",
+			"version": "1.0.0",
+			"endpoints": gin.H{
+				"health":   "/health",
+				"search":   "POST /search",
+				"imgproxy": "GET /imgproxy?url=<image_url>",
+				"tables":   "/api/tables",
 			},
 			"documentation": "Available endpoints listed above",
 		})
