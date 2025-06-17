@@ -21,7 +21,7 @@ id = xamphure_id
 /get/tambons
 amphure_id={xamphure_id}&province_id={xprovince_id}
 ดึงข้อมูลตำบลทั้งหมดในอำเภอที่ระบุ
-ผลลัพธ์: JSON (id, name_th, name_en)
+ผลลัพธ์: JSON (id, name_th, name_en,zip_code)
 id = xtambon_id
 เงื่อนไข: where amphure_id = xamphure_id and province_id = xprovince_id
 
