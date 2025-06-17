@@ -1,0 +1,9 @@
+# Prevent GitHub Copilot from processing these files
+smlgoapi.json linguist-generated=true
+smlgoapi.*.json linguist-generated=true
+docs/** linguist-documentation=true
+*.md linguist-documentation=true
+
+# Mark as binary to prevent processing
+smlgoapi.json binary
+config/*.json binary

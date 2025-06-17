@@ -1,0 +1,32 @@
+# Sensitive configuration files - DO NOT MODIFY OR READ
+smlgoapi.json
+smlgoapi.production.json
+smlgoapi.local.json
+smlgoapi.development.json
+
+# Documentation folder - DO NOT MODIFY
+docs/
+docs/**
+*.md
+
+# Environment files
+.env
+.env.*
+
+# Security and credential files
+*.key
+*.pem
+*.crt
+config/production.json
+config/local.json
+secrets/
+passwords.txt
+credentials.json
+
+# Database dumps
+*.sql
+*.dump
+
+# Logs that might contain sensitive data
+*.log
+logs/

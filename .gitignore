@@ -21,6 +21,18 @@ go.work
 .env.local
 .env.*.local
 
+# Configuration files with sensitive data
+smlgoapi.json
+smlgoapi.production.json
+smlgoapi.local.json
+smlgoapi.development.json
+*production*.json
+*local*.json
+
+# Documentation - keep local only (specific sensitive docs)
+docs/local/
+docs/sensitive/
+
 # IDE
 .vscode/settings.json
 .idea/

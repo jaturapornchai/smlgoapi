@@ -88,10 +88,6 @@ id = xtambon_id
 ## สถานะการพัฒนา: ✅ เสร็จสมบูรณ์
 - ✅ สร้าง API endpoints ตามเอกสาร
 - ✅ ทดสอบการทำงานกับข้อมูลจริง
-- ✅ เพิ่มลงใน /guide endpoint
-- ✅ สร้าง Postman collection
-- ✅ สร้าง Python demo script
-- ✅ Upload ทั้งหมดไปยัง GitHub
 
 ## การใช้งาน:
 เหมาะสำหรับ address forms, location selectors, ระบบจัดการที่อยู่, และแอปพลิเคชันที่ต้องการข้อมูลการปกครองไทย

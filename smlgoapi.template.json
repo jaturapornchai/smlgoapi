@@ -1,0 +1,28 @@
+{
+    "_comment": "Template file for smlgoapi.json - Copy this file to smlgoapi.json and fill in your actual values",
+    "_warning": "DO NOT COMMIT smlgoapi.json to Git - It contains sensitive credentials",
+    "_copilot_note": "GitHub Copilot should NOT modify the actual smlgoapi.json file",
+    "server": {
+        "host": "0.0.0.0",
+        "port": "8008"
+    },
+    "jwt": {
+        "secret": "CHANGE_THIS_JWT_SECRET_TO_STRONG_RANDOM_STRING",
+        "refresh_secret": "CHANGE_THIS_REFRESH_SECRET_TO_STRONG_RANDOM_STRING"
+    },
+    "clickhouse": {
+        "host": "YOUR_CLICKHOUSE_HOST",
+        "port": "9000",
+        "user": "YOUR_USERNAME",
+        "password": "YOUR_PASSWORD",
+        "database": "YOUR_DATABASE",
+        "secure": false
+    },
+    "security": {
+        "allowed_origins": [
+            "http://localhost:3000",
+            "https://yourdomain.com"
+        ],
+        "rate_limit_per_minute": 100
+    }
+}
