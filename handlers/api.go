@@ -16,15 +16,18 @@ type APIHandler struct {
 	clickHouseService *services.ClickHouseService
 	vectorDB          *services.TFIDFVectorDatabase
 	imageProxyService *services.ImageProxy
+	thaiAdminService  *services.ThaiAdminService
 }
 
 func NewAPIHandler(clickHouseService *services.ClickHouseService) *APIHandler {
 	vectorDB := services.NewTFIDFVectorDatabase(clickHouseService)
 	imageProxyService := services.NewImageProxy()
+	thaiAdminService := services.NewThaiAdminService()
 	return &APIHandler{
 		clickHouseService: clickHouseService,
 		vectorDB:          vectorDB,
 		imageProxyService: imageProxyService,
+		thaiAdminService:  thaiAdminService,
 	}
 }
 
@@ -520,9 +523,7 @@ func (h *APIHandler) GuideEndpoint(c *gin.Context) {
 					"Bypass CORS restrictions",
 					"Image caching and optimization",
 				},
-			},
-
-			"database_tables": map[string]interface{}{
+			},			"database_tables": map[string]interface{}{
 				"method":     "GET",
 				"url":        "/api/tables",
 				"purpose":    "List all available database tables",
@@ -535,6 +536,96 @@ func (h *APIHandler) GuideEndpoint(c *gin.Context) {
 					"Database exploration",
 					"Schema discovery",
 					"Table listing for admin interfaces",
+				},
+			},
+
+			"thai_provinces": map[string]interface{}{
+				"method":       "POST",
+				"url":          "/get/provinces",
+				"purpose":      "Get all Thai provinces with Thai and English names",
+				"content_type": "application/json",
+				"request_body": map[string]interface{}{}, // Empty object
+				"response_format": map[string]interface{}{
+					"success": "boolean - Request status",
+					"message": "string - Success message with count",
+					"data":    "array - List of provinces",
+				},
+				"response_example": map[string]interface{}{
+					"success": true,
+					"message": "Retrieved 77 provinces successfully",
+					"data": []map[string]interface{}{
+						{"id": 1, "name_th": "กรุงเทพมหานคร", "name_en": "Bangkok"},
+						{"id": 2, "name_th": "สมุทรปราการ", "name_en": "Samut Prakan"},
+					},
+				},
+				"use_cases": []string{
+					"Address form population",
+					"Location-based filtering",
+					"Administrative boundary lookup",
+				},
+			},
+
+			"thai_amphures": map[string]interface{}{
+				"method":       "POST",
+				"url":          "/get/amphures",
+				"purpose":      "Get all districts (amphures) in a specified province",
+				"content_type": "application/json",
+				"request_format": map[string]interface{}{
+					"province_id": "integer (required) - Province ID from /get/provinces",
+				},
+				"request_example": map[string]interface{}{
+					"province_id": 1,
+				},
+				"response_format": map[string]interface{}{
+					"success": "boolean - Request status",
+					"message": "string - Success message with count",
+					"data":    "array - List of amphures in the province",
+				},
+				"response_example": map[string]interface{}{
+					"success": true,
+					"message": "Retrieved 50 amphures for province_id 1",
+					"data": []map[string]interface{}{
+						{"id": 1001, "name_th": "เขตพระนคร", "name_en": "Khet Phra Nakhon"},
+						{"id": 1002, "name_th": "เขตดุสิต", "name_en": "Khet Dusit"},
+					},
+				},
+				"use_cases": []string{
+					"Two-level address selection",
+					"District-based operations",
+					"Administrative subdivision lookup",
+				},
+			},
+
+			"thai_tambons": map[string]interface{}{
+				"method":       "POST",
+				"url":          "/get/tambons",
+				"purpose":      "Get all sub-districts (tambons) in a specified amphure and province",
+				"content_type": "application/json",
+				"request_format": map[string]interface{}{
+					"amphure_id":  "integer (required) - Amphure ID from /get/amphures",
+					"province_id": "integer (required) - Province ID for validation",
+				},
+				"request_example": map[string]interface{}{
+					"amphure_id":  1001,
+					"province_id": 1,
+				},
+				"response_format": map[string]interface{}{
+					"success": "boolean - Request status",
+					"message": "string - Success message with count",
+					"data":    "array - List of tambons in the amphure",
+				},
+				"response_example": map[string]interface{}{
+					"success": true,
+					"message": "Retrieved 12 tambons for amphure_id 1001 in province_id 1",
+					"data": []map[string]interface{}{
+						{"id": 100101, "name_th": "พระบรมมหาราชวัง", "name_en": "Phra Borom Maha Ratchawang"},
+						{"id": 100102, "name_th": "วังบูรพาภิรมย์", "name_en": "Wang Burapha Phirom"},
+					},
+				},
+				"use_cases": []string{
+					"Complete address hierarchy",
+					"Fine-grained location services",
+					"Full administrative address validation",
 				},
 			},
 
@@ -652,4 +743,101 @@ const result = await executeSQL('select', 'SELECT * FROM products LIMIT 5');
 	}
 
 	c.JSON(http.StatusOK, guide)
+}
+
+// Thai Administrative Data Endpoints
+
+// GetProvinces godoc
+// @Summary Get all Thai provinces
+// @Description Retrieve all provinces in Thailand with Thai and English names
+// @Tags thai-admin
+// @Accept json
+// @Produce json
+// @Success 200 {object} models.APIResponse{data=[]models.Province}
+// @Router /get/provinces [post]
+func (h *APIHandler) GetProvinces(c *gin.Context) {
+	provinces, err := h.thaiAdminService.GetProvinces()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Success: false,
+			Error:   "Failed to load provinces: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, models.APIResponse{
+		Success: true,
+		Data:    provinces,
+		Message: fmt.Sprintf("Retrieved %d provinces successfully", len(provinces)),
+	})
+}
+
+// GetAmphures godoc
+// @Summary Get all amphures in a province
+// @Description Retrieve all districts (amphures) in a specified province
+// @Tags thai-admin
+// @Accept json
+// @Produce json
+// @Param request body models.AmphureRequest true "Province ID"
+// @Success 200 {object} models.APIResponse{data=[]models.Amphure}
+// @Router /get/amphures [post]
+func (h *APIHandler) GetAmphures(c *gin.Context) {
+	var req models.AmphureRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.APIResponse{
+			Success: false,
+			Error:   "Invalid request format: " + err.Error(),
+		})
+		return
+	}
+
+	amphures, err := h.thaiAdminService.GetAmphuresByProvinceID(req.ProvinceID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Success: false,
+			Error:   "Failed to load amphures: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, models.APIResponse{
+		Success: true,
+		Data:    amphures,
+		Message: fmt.Sprintf("Retrieved %d amphures for province_id %d", len(amphures), req.ProvinceID),
+	})
+}
+
+// GetTambons godoc
+// @Summary Get all tambons in an amphure
+// @Description Retrieve all sub-districts (tambons) in a specified amphure and province
+// @Tags thai-admin
+// @Accept json
+// @Produce json
+// @Param request body models.TambonRequest true "Amphure and Province IDs"
+// @Success 200 {object} models.APIResponse{data=[]models.Tambon}
+// @Router /get/tambons [post]
+func (h *APIHandler) GetTambons(c *gin.Context) {
+	var req models.TambonRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.APIResponse{
+			Success: false,
+			Error:   "Invalid request format: " + err.Error(),
+		})
+		return
+	}
+
+	tambons, err := h.thaiAdminService.GetTambonsByAmphureAndProvince(req.AmphureID, req.ProvinceID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Success: false,
+			Error:   "Failed to load tambons: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, models.APIResponse{
+		Success: true,
+		Data:    tambons,
+		Message: fmt.Sprintf("Retrieved %d tambons for amphure_id %d in province_id %d", len(tambons), req.AmphureID, req.ProvinceID),
+	})
 }

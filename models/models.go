@@ -67,3 +67,54 @@ type SelectResponse struct {
 	Duration float64       `json:"duration_ms"`
 	Error    string        `json:"error,omitempty"`
 }
+
+// Thai Administrative Data Models
+
+// Province represents a Thai province
+type Province struct {
+	ID          int    `json:"id"`
+	NameTh      string `json:"name_th"`
+	NameEn      string `json:"name_en"`
+	GeographyID int    `json:"geography_id,omitempty"`
+	CreatedAt   string `json:"created_at,omitempty"`
+	UpdatedAt   string `json:"updated_at,omitempty"`
+	DeletedAt   *string `json:"deleted_at,omitempty"`
+}
+
+// Amphure represents a Thai district (amphure)
+type Amphure struct {
+	ID         int    `json:"id"`
+	NameTh     string `json:"name_th"`
+	NameEn     string `json:"name_en"`
+	ProvinceID int    `json:"province_id"`
+	CreatedAt  string `json:"created_at,omitempty"`
+	UpdatedAt  string `json:"updated_at,omitempty"`
+	DeletedAt  *string `json:"deleted_at,omitempty"`
+}
+
+// Tambon represents a Thai sub-district (tambon)
+type Tambon struct {
+	ID        int    `json:"id"`
+	NameTh    string `json:"name_th"`
+	NameEn    string `json:"name_en"`
+	AmphureID int    `json:"amphure_id"`
+	CreatedAt string `json:"created_at,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+	DeletedAt *string `json:"deleted_at,omitempty"`
+}
+
+// ProvinceRequest represents a request for province data
+type ProvinceRequest struct {
+	// Empty for now, but can be extended later
+}
+
+// AmphureRequest represents a request for amphure data
+type AmphureRequest struct {
+	ProvinceID int `json:"province_id" binding:"required"`
+}
+
+// TambonRequest represents a request for tambon data
+type TambonRequest struct {
+	AmphureID  int `json:"amphure_id" binding:"required"`
+	ProvinceID int `json:"province_id" binding:"required"`
+}

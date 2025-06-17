@@ -126,10 +126,14 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 	router.POST("/search", apiHandler.SearchProducts)
 	// Image proxy endpoint (GET and HEAD)
 	router.GET("/imgproxy", apiHandler.ImageProxy)
-	router.HEAD("/imgproxy", apiHandler.ImageProxyHead)
-	// Universal SQL endpoints
+	router.HEAD("/imgproxy", apiHandler.ImageProxyHead)	// Universal SQL endpoints
 	router.POST("/command", apiHandler.CommandEndpoint)
 	router.POST("/select", apiHandler.SelectEndpoint)
+
+	// Thai Administrative Data endpoints
+	router.POST("/get/provinces", apiHandler.GetProvinces)
+	router.POST("/get/amphures", apiHandler.GetAmphures)
+	router.POST("/get/tambons", apiHandler.GetTambons)
 
 	// Documentation endpoint for AI agents
 	router.GET("/guide", apiHandler.GuideEndpoint)
@@ -142,15 +146,17 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 	} // API documentation endpoint
 	router.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
-			"message": "SMLGOAPI - ClickHouse REST API",
-			"version": "1.0.0", "endpoints": gin.H{
-				"health":   "/health",
-				"search":   "POST /search",
-				"imgproxy": "GET /imgproxy?url=<image_url>",
-				"command":  "POST /command",
-				"select":   "POST /select",
-				"guide":    "GET /guide",
-				"tables":   "/api/tables",
+			"message": "SMLGOAPI - ClickHouse REST API",			"version": "1.0.0", "endpoints": gin.H{
+				"health":       "/health",
+				"search":       "POST /search",
+				"imgproxy":     "GET /imgproxy?url=<image_url>",
+				"command":      "POST /command",
+				"select":       "POST /select",
+				"provinces":    "POST /get/provinces",
+				"amphures":     "POST /get/amphures",
+				"tambons":      "POST /get/tambons",
+				"guide":        "GET /guide",
+				"tables":       "/api/tables",
 			},
 			"documentation": "Available endpoints listed above",
 		})
