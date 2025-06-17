@@ -65,8 +65,7 @@ func main() {
 	srv := &http.Server{
 		Addr:    cfg.GetServerAddress(),
 		Handler: router,
-	}
-	// Start server in a goroutine
+	} // Start server in a goroutine
 	go func() {
 		displayURL := getDisplayURL(cfg.GetServerAddress())
 		log.Printf("🚀 SMLGOAPI Server starting on %s", cfg.GetServerAddress())
@@ -77,7 +76,9 @@ func main() {
 			cfg.ClickHouse.Database)
 		log.Printf("🌐 API Endpoints:")
 		log.Printf("  - Health Check: http://%s/health", displayURL)
-		log.Printf("  - API Base: http://%s/api", displayURL)
+		log.Printf("  - API v1 Base: http://%s/v1", displayURL)
+		log.Printf("  - API Legacy: http://%s/api", displayURL)
+		log.Printf("  - Documentation: http://%s/", displayURL)
 
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("❌ Failed to start server: %v", err)
@@ -118,47 +119,87 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
-	}))
-
-	// Health check endpoint
+	})) // Health check endpoint
 	router.GET("/health", apiHandler.HealthCheck)
-	// Search endpoint
+
+	// Legacy endpoints (maintain backwards compatibility)
 	router.POST("/search", apiHandler.SearchProducts)
-	// Image proxy endpoint (GET and HEAD)
 	router.GET("/imgproxy", apiHandler.ImageProxy)
-	router.HEAD("/imgproxy", apiHandler.ImageProxyHead)	// Universal SQL endpoints
+	router.HEAD("/imgproxy", apiHandler.ImageProxyHead)
 	router.POST("/command", apiHandler.CommandEndpoint)
 	router.POST("/select", apiHandler.SelectEndpoint)
 
-	// Thai Administrative Data endpoints
-	router.POST("/get/provinces", apiHandler.GetProvinces)
-	router.POST("/get/amphures", apiHandler.GetAmphures)
-	router.POST("/get/tambons", apiHandler.GetTambons)
+	// API v1 routes
+	v1 := router.Group("/v1")
+	{
+		// Thai Administrative Data endpoints
+		v1.POST("/provinces", apiHandler.GetProvinces)
+		v1.POST("/amphures", apiHandler.GetAmphures)
+		v1.POST("/tambons", apiHandler.GetTambons)
+		v1.POST("/findbyzipcode", apiHandler.FindByZipCode)
 
-	// Documentation endpoint for AI agents
-	router.GET("/guide", apiHandler.GuideEndpoint)
+		// Search endpoints
+		v1.POST("/search", apiHandler.SearchProducts)
 
-	// API routes
+		// Database endpoints
+		v1.GET("/tables", apiHandler.GetTables)
+		v1.POST("/command", apiHandler.CommandEndpoint)
+		v1.POST("/select", apiHandler.SelectEndpoint)
+
+		// Image proxy endpoints
+		v1.GET("/imgproxy", apiHandler.ImageProxy)
+		v1.HEAD("/imgproxy", apiHandler.ImageProxyHead)
+	}
+
+	// Legacy API routes (maintain backwards compatibility)
 	api := router.Group("/api")
 	{
 		// Database routes
 		api.GET("/tables", apiHandler.GetTables)
-	} // API documentation endpoint
+	}
+
+	// Legacy /get/ routes (maintain backwards compatibility)
+	get := router.Group("/get")
+	{
+		get.POST("/provinces", apiHandler.GetProvinces)
+		get.POST("/amphures", apiHandler.GetAmphures)
+		get.POST("/tambons", apiHandler.GetTambons)
+		get.POST("/findbyzipcode", apiHandler.FindByZipCode)
+	}
+
+	// API documentation endpoint
 	router.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
-			"message": "SMLGOAPI - ClickHouse REST API",			"version": "1.0.0", "endpoints": gin.H{
-				"health":       "/health",
-				"search":       "POST /search",
-				"imgproxy":     "GET /imgproxy?url=<image_url>",
-				"command":      "POST /command",
-				"select":       "POST /select",
-				"provinces":    "POST /get/provinces",
-				"amphures":     "POST /get/amphures",
-				"tambons":      "POST /get/tambons",
-				"guide":        "GET /guide",
-				"tables":       "/api/tables",
+			"message":     "SMLGOAPI - ClickHouse REST API",
+			"version":     "1.0.0",
+			"api_version": "v1", "endpoints": gin.H{
+				// Core endpoints
+				"health": "GET /health",
+
+				// API v1 endpoints (recommended)
+				"v1_provinces":     "POST /v1/provinces",
+				"v1_amphures":      "POST /v1/amphures",
+				"v1_tambons":       "POST /v1/tambons",
+				"v1_findbyzipcode": "POST /v1/findbyzipcode",
+				"v1_search":        "POST /v1/search",
+				"v1_command":       "POST /v1/command",
+				"v1_select":        "POST /v1/select",
+				"v1_tables":        "GET /v1/tables",
+				"v1_imgproxy":      "GET /v1/imgproxy?url=<image_url>",
+
+				// Legacy endpoints (backwards compatibility)
+				"provinces":     "POST /get/provinces",
+				"amphures":      "POST /get/amphures",
+				"tambons":       "POST /get/tambons",
+				"findbyzipcode": "POST /get/findbyzipcode",
+				"search":        "POST /search",
+				"command":       "POST /command",
+				"select":        "POST /select",
+				"tables":        "GET /api/tables",
+				"imgproxy":      "GET /imgproxy?url=<image_url>",
 			},
-			"documentation": "Available endpoints listed above",
+			"documentation":  "Use /v1/ endpoints for new integrations. Legacy endpoints maintained for backwards compatibility.",
+			"migration_note": "Please migrate to /v1/ endpoints. Legacy endpoints will be deprecated in future versions.",
 		})
 	})
 

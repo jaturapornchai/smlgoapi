@@ -10,12 +10,14 @@ import (
 
 // ThaiAdminService handles Thai administrative data operations
 type ThaiAdminService struct {
-	provincesData         []models.Province
-	amphuresData          []models.Amphure
-	tambonsData           []models.Tambon
-	provincesLoaded       bool
-	amphuresLoaded        bool
-	tambonsLoaded         bool
+	provincesData          []models.Province
+	amphuresData           []models.Amphure
+	tambonsData            []models.Tambon
+	provincesLoaded        bool
+	amphuresLoaded         bool
+	tambonsLoaded          bool
+	completeLocationData   []models.CompleteLocationData
+	completeLocationLoaded bool
 }
 
 // NewThaiAdminService creates a new Thai administrative service
@@ -159,6 +161,85 @@ func (s *ThaiAdminService) GetTambonsByAmphureAndProvince(amphureID, provinceID 
 				ID:     tambon.ID,
 				NameTh: tambon.NameTh,
 				NameEn: tambon.NameEn,
+			})
+		}
+	}
+
+	return result, nil
+}
+
+// loadCompleteLocationData loads complete location data from JSON file
+func (s *ThaiAdminService) loadCompleteLocationData() error {
+	if s.completeLocationLoaded {
+		return nil
+	}
+
+	filePath := filepath.Join("provinces", "api_revert_tambon_with_amphure_province.json")
+	data, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to read complete location file: %v", err)
+	}
+
+	var tambonsWithNested []models.TambonWithNested
+	err = json.Unmarshal(data, &tambonsWithNested)
+	if err != nil {
+		return fmt.Errorf("failed to parse complete location JSON: %v", err)
+	}
+
+	// Convert to our CompleteLocationData structure
+	s.completeLocationData = make([]models.CompleteLocationData, len(tambonsWithNested))
+	for i, tambon := range tambonsWithNested {
+		s.completeLocationData[i] = models.CompleteLocationData{
+			Province: models.Province{
+				ID:     tambon.Amphure.Province.ID,
+				NameTh: tambon.Amphure.Province.NameTh,
+				NameEn: tambon.Amphure.Province.NameEn,
+			},
+			Amphure: models.Amphure{
+				ID:     tambon.Amphure.ID,
+				NameTh: tambon.Amphure.NameTh,
+				NameEn: tambon.Amphure.NameEn,
+			},
+			Tambon: models.Tambon{
+				ID:      tambon.ID,
+				NameTh:  tambon.NameTh,
+				NameEn:  tambon.NameEn,
+				ZipCode: tambon.ZipCode,
+			},
+		}
+	}
+
+	s.completeLocationLoaded = true
+	return nil
+}
+
+// FindByZipCode finds all locations with the given zip code
+func (s *ThaiAdminService) FindByZipCode(zipCode int) ([]models.CompleteLocationData, error) {
+	err := s.loadCompleteLocationData()
+	if err != nil {
+		return nil, err
+	}
+
+	var result []models.CompleteLocationData
+	for _, location := range s.completeLocationData {
+		if location.Tambon.ZipCode == zipCode {
+			result = append(result, models.CompleteLocationData{
+				Province: models.Province{
+					ID:     location.Province.ID,
+					NameTh: location.Province.NameTh,
+					NameEn: location.Province.NameEn,
+				},
+				Amphure: models.Amphure{
+					ID:     location.Amphure.ID,
+					NameTh: location.Amphure.NameTh,
+					NameEn: location.Amphure.NameEn,
+				},
+				Tambon: models.Tambon{
+					ID:      location.Tambon.ID,
+					NameTh:  location.Tambon.NameTh,
+					NameEn:  location.Tambon.NameEn,
+					ZipCode: location.Tambon.ZipCode,
+				},
 			})
 		}
 	}

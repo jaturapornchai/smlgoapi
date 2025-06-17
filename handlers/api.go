@@ -523,7 +523,7 @@ func (h *APIHandler) GuideEndpoint(c *gin.Context) {
 					"Bypass CORS restrictions",
 					"Image caching and optimization",
 				},
-			},			"database_tables": map[string]interface{}{
+			}, "database_tables": map[string]interface{}{
 				"method":     "GET",
 				"url":        "/api/tables",
 				"purpose":    "List all available database tables",
@@ -839,5 +839,40 @@ func (h *APIHandler) GetTambons(c *gin.Context) {
 		Success: true,
 		Data:    tambons,
 		Message: fmt.Sprintf("Retrieved %d tambons for amphure_id %d in province_id %d", len(tambons), req.AmphureID, req.ProvinceID),
+	})
+}
+
+// FindByZipCode godoc
+// @Summary Find location by zip code
+// @Description Find complete location information (province, amphure, tambon) by Thai postal code
+// @Tags thai-admin
+// @Accept json
+// @Produce json
+// @Param request body models.ZipCodeRequest true "Zip code to search"
+// @Success 200 {object} models.APIResponse{data=[]models.CompleteLocationData}
+// @Router /get/findbyzipcode [post]
+func (h *APIHandler) FindByZipCode(c *gin.Context) {
+	var req models.ZipCodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.APIResponse{
+			Success: false,
+			Error:   "Invalid request format: " + err.Error(),
+		})
+		return
+	}
+
+	locations, err := h.thaiAdminService.FindByZipCode(req.ZipCode)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{
+			Success: false,
+			Error:   "Failed to find locations: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, models.APIResponse{
+		Success: true,
+		Data:    locations,
+		Message: fmt.Sprintf("Found %d locations for zip code %d", len(locations), req.ZipCode),
 	})
 }

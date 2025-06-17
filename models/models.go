@@ -72,34 +72,35 @@ type SelectResponse struct {
 
 // Province represents a Thai province
 type Province struct {
-	ID          int    `json:"id"`
-	NameTh      string `json:"name_th"`
-	NameEn      string `json:"name_en"`
-	GeographyID int    `json:"geography_id,omitempty"`
-	CreatedAt   string `json:"created_at,omitempty"`
-	UpdatedAt   string `json:"updated_at,omitempty"`
+	ID          int     `json:"id"`
+	NameTh      string  `json:"name_th"`
+	NameEn      string  `json:"name_en"`
+	GeographyID int     `json:"geography_id,omitempty"`
+	CreatedAt   string  `json:"created_at,omitempty"`
+	UpdatedAt   string  `json:"updated_at,omitempty"`
 	DeletedAt   *string `json:"deleted_at,omitempty"`
 }
 
 // Amphure represents a Thai district (amphure)
 type Amphure struct {
-	ID         int    `json:"id"`
-	NameTh     string `json:"name_th"`
-	NameEn     string `json:"name_en"`
-	ProvinceID int    `json:"province_id"`
-	CreatedAt  string `json:"created_at,omitempty"`
-	UpdatedAt  string `json:"updated_at,omitempty"`
+	ID         int     `json:"id"`
+	NameTh     string  `json:"name_th"`
+	NameEn     string  `json:"name_en"`
+	ProvinceID int     `json:"province_id"`
+	CreatedAt  string  `json:"created_at,omitempty"`
+	UpdatedAt  string  `json:"updated_at,omitempty"`
 	DeletedAt  *string `json:"deleted_at,omitempty"`
 }
 
 // Tambon represents a Thai sub-district (tambon)
 type Tambon struct {
-	ID        int    `json:"id"`
-	NameTh    string `json:"name_th"`
-	NameEn    string `json:"name_en"`
-	AmphureID int    `json:"amphure_id"`
-	CreatedAt string `json:"created_at,omitempty"`
-	UpdatedAt string `json:"updated_at,omitempty"`
+	ID        int     `json:"id"`
+	NameTh    string  `json:"name_th"`
+	NameEn    string  `json:"name_en"`
+	ZipCode   int     `json:"zip_code,omitempty"`
+	AmphureID int     `json:"amphure_id"`
+	CreatedAt string  `json:"created_at,omitempty"`
+	UpdatedAt string  `json:"updated_at,omitempty"`
 	DeletedAt *string `json:"deleted_at,omitempty"`
 }
 
@@ -117,4 +118,52 @@ type AmphureRequest struct {
 type TambonRequest struct {
 	AmphureID  int `json:"amphure_id" binding:"required"`
 	ProvinceID int `json:"province_id" binding:"required"`
+}
+
+// ZipCodeRequest represents a request to find location by zip code
+type ZipCodeRequest struct {
+	ZipCode int `json:"zip_code" binding:"required"`
+}
+
+// CompleteLocationData represents complete location information with nested structure
+type CompleteLocationData struct {
+	Province Province `json:"province"`
+	Amphure  Amphure  `json:"amphure"`
+	Tambon   Tambon   `json:"tambon"`
+}
+
+// TambonWithNested represents the structure of tambon data from the JSON file
+type TambonWithNested struct {
+	ID        int               `json:"id"`
+	ZipCode   int               `json:"zip_code"`
+	NameTh    string            `json:"name_th"`
+	NameEn    string            `json:"name_en"`
+	AmphureID int               `json:"amphure_id"`
+	CreatedAt string            `json:"created_at"`
+	UpdatedAt string            `json:"updated_at"`
+	DeletedAt *string           `json:"deleted_at"`
+	Amphure   AmphureWithNested `json:"amphure"`
+}
+
+// AmphureWithNested represents the nested amphure structure
+type AmphureWithNested struct {
+	ID         int            `json:"id"`
+	NameTh     string         `json:"name_th"`
+	NameEn     string         `json:"name_en"`
+	ProvinceID int            `json:"province_id"`
+	CreatedAt  string         `json:"created_at"`
+	UpdatedAt  string         `json:"updated_at"`
+	DeletedAt  *string        `json:"deleted_at"`
+	Province   ProvinceNested `json:"province"`
+}
+
+// ProvinceNested represents the nested province structure
+type ProvinceNested struct {
+	ID          int     `json:"id"`
+	NameTh      string  `json:"name_th"`
+	NameEn      string  `json:"name_en"`
+	GeographyID int     `json:"geography_id"`
+	CreatedAt   string  `json:"created_at"`
+	UpdatedAt   string  `json:"updated_at"`
+	DeletedAt   *string `json:"deleted_at"`
 }
