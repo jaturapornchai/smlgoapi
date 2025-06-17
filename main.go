@@ -3,19 +3,46 @@ package main
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
-	"syscall"
-	"time"
-
 	"smlgoapi/config"
 	"smlgoapi/handlers"
 	"smlgoapi/services"
+	"strings"
+	"syscall"
+	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
+
+// getLocalIP returns the local IP address of the machine
+func getLocalIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		// Fallback to localhost if can't determine IP
+		return "localhost"
+	}
+	defer conn.Close()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	return localAddr.IP.String()
+}
+
+// getDisplayURL returns a user-friendly URL for display
+func getDisplayURL(serverAddr string) string {
+	localIP := getLocalIP()
+
+	// Replace 0.0.0.0 with actual IP for display purposes
+	if strings.HasPrefix(serverAddr, "0.0.0.0:") {
+		port := strings.TrimPrefix(serverAddr, "0.0.0.0:")
+		return localIP + ":" + port
+	}
+
+	return serverAddr
+}
 
 func main() {
 	// Load configuration
@@ -39,9 +66,9 @@ func main() {
 		Addr:    cfg.GetServerAddress(),
 		Handler: router,
 	}
-
 	// Start server in a goroutine
 	go func() {
+		displayURL := getDisplayURL(cfg.GetServerAddress())
 		log.Printf("🚀 SMLGOAPI Server starting on %s", cfg.GetServerAddress())
 		log.Printf("📊 ClickHouse: %s@%s:%s/%s",
 			cfg.ClickHouse.User,
@@ -49,8 +76,8 @@ func main() {
 			cfg.ClickHouse.Port,
 			cfg.ClickHouse.Database)
 		log.Printf("🌐 API Endpoints:")
-		log.Printf("  - Health Check: http://%s/health", cfg.GetServerAddress())
-		log.Printf("  - API Base: http://%s/api", cfg.GetServerAddress())
+		log.Printf("  - Health Check: http://%s/health", displayURL)
+		log.Printf("  - API Base: http://%s/api", displayURL)
 
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("❌ Failed to start server: %v", err)
@@ -95,28 +122,34 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 
 	// Health check endpoint
 	router.GET("/health", apiHandler.HealthCheck)
-
 	// Search endpoint
 	router.POST("/search", apiHandler.SearchProducts)
 	// Image proxy endpoint (GET and HEAD)
 	router.GET("/imgproxy", apiHandler.ImageProxy)
 	router.HEAD("/imgproxy", apiHandler.ImageProxyHead)
+	// Universal SQL endpoints
+	router.POST("/command", apiHandler.CommandEndpoint)
+	router.POST("/select", apiHandler.SelectEndpoint)
+
+	// Documentation endpoint for AI agents
+	router.GET("/guide", apiHandler.GuideEndpoint)
 
 	// API routes
 	api := router.Group("/api")
 	{
 		// Database routes
 		api.GET("/tables", apiHandler.GetTables)
-	}
-	// API documentation endpoint
+	} // API documentation endpoint
 	router.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"message": "SMLGOAPI - ClickHouse REST API",
-			"version": "1.0.0",
-			"endpoints": gin.H{
+			"version": "1.0.0", "endpoints": gin.H{
 				"health":   "/health",
 				"search":   "POST /search",
 				"imgproxy": "GET /imgproxy?url=<image_url>",
+				"command":  "POST /command",
+				"select":   "POST /select",
+				"guide":    "GET /guide",
 				"tables":   "/api/tables",
 			},
 			"documentation": "Available endpoints listed above",

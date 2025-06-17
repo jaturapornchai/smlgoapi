@@ -61,3 +61,81 @@ func (s *ClickHouseService) GetTables(ctx context.Context) ([]models.Table, erro
 
 	return tables, rows.Err()
 }
+
+// ExecuteCommand executes a SQL command (INSERT, UPDATE, DELETE, CREATE, etc.)
+func (s *ClickHouseService) ExecuteCommand(ctx context.Context, query string) (interface{}, error) {
+	// Execute the command
+	result, err := s.db.ExecContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute command: %w", err)
+	}
+
+	// Get rows affected if possible
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		// Some commands might not return rows affected, return basic success
+		return map[string]interface{}{
+			"status": "success",
+			"query":  query,
+		}, nil
+	}
+
+	return map[string]interface{}{
+		"status":        "success",
+		"rows_affected": rowsAffected,
+		"query":         query,
+	}, nil
+}
+
+// ExecuteSelect executes a SELECT query and returns the result data
+func (s *ClickHouseService) ExecuteSelect(ctx context.Context, query string) ([]interface{}, error) {
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute select query: %w", err)
+	}
+	defer rows.Close()
+
+	// Get column information
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get columns: %w", err)
+	}
+
+	var results []interface{}
+
+	for rows.Next() {
+		// Create a slice of interface{} to hold the values
+		values := make([]interface{}, len(columns))
+		valuePtrs := make([]interface{}, len(columns))
+
+		for i := range columns {
+			valuePtrs[i] = &values[i]
+		}
+
+		// Scan the row into the value pointers
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		// Create a map for this row
+		rowMap := make(map[string]interface{})
+		for i, col := range columns {
+			val := values[i]
+
+			// Convert []uint8 to string if needed
+			if b, ok := val.([]uint8); ok {
+				val = string(b)
+			}
+
+			rowMap[col] = val
+		}
+
+		results = append(results, rowMap)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error: %w", err)
+	}
+
+	return results, nil
+}

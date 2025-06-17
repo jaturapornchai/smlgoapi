@@ -1,6 +1,31 @@
 # SMLGOAPI - ClickHouse REST API Backend with Vector Search
 
-REST API backend สำหรับเชื่อมต่อกับ ClickHouse database โดยใช้ Go + Gin framework พร้อม TF-IDF Vector Search
+REST API backend สำหรับเชื่อมต่อกับ ClickHouse database โดยใช้ Go + Gin framework พร้อม TF-IDF Vector Search และ Universal SQL Execution
+
+## 🤖 AI Agent Integration
+
+SMLGOAPI รองรับการใช้งานโดย AI agents โดยมี **`/guide` endpoint** ที่ให้ข้อมูลครบถ้วนเกี่ยวกับ API:
+
+### 📖 Guide Endpoint
+- **URL**: `GET /guide`
+- **Purpose**: Complete API documentation for AI agents
+- **Response**: Comprehensive JSON with all endpoint details, examples, and best practices
+
+```bash
+curl http://localhost:8008/guide
+```
+
+### 🧠 AI Agent Features
+- **Self-Documenting API**: AI agents can discover all capabilities via `/guide`
+- **Universal SQL Execution**: Execute any SQL command or query via JSON
+- **Consistent Response Format**: All endpoints return standardized JSON
+- **Error Handling**: Complete error information for robust integration
+- **Performance Metrics**: Duration tracking for all operations
+
+### 📚 AI Integration Examples
+- `ai_agent_example.py` - Complete Python example for AI agents
+- `COMMAND_SELECT_API_GUIDE.md` - Detailed usage guide
+- `AI_GUIDE_ENDPOINT_DOCUMENTATION.md` - AI-specific documentation
 
 ## 🚀 Git Deployment Guide
 

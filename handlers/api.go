@@ -219,3 +219,437 @@ func (h *APIHandler) ImageProxy(c *gin.Context) {
 func (h *APIHandler) ImageProxyHead(c *gin.Context) {
 	h.imageProxyService.HeadHandler(c)
 }
+
+// CommandEndpoint godoc
+// @Summary Execute database command
+// @Description Execute any SQL command (INSERT, UPDATE, DELETE, CREATE, etc.) via JSON request
+// @Tags database
+// @Accept json
+// @Produce json
+// @Param command body models.CommandRequest true "Command to execute"
+// @Success 200 {object} models.CommandResponse
+// @Router /command [post]
+func (h *APIHandler) CommandEndpoint(c *gin.Context) {
+	startTime := time.Now()
+
+	// Parse JSON request
+	var commandReq models.CommandRequest
+	if err := c.ShouldBindJSON(&commandReq); err != nil {
+		log.Printf("❌ [command] JSON bind error: %v", err)
+		c.JSON(http.StatusBadRequest, models.CommandResponse{
+			Success: false,
+			Error:   "Invalid JSON body: " + err.Error(),
+		})
+		return
+	}
+
+	log.Printf("💻 [command] Executing command: %s", commandReq.Query)
+
+	ctx := c.Request.Context()
+
+	// Execute command using ClickHouse service
+	result, err := h.clickHouseService.ExecuteCommand(ctx, commandReq.Query)
+	duration := float64(time.Since(startTime).Nanoseconds()) / 1e6
+
+	if err != nil {
+		log.Printf("❌ [command] Execution failed: %v", err)
+		c.JSON(http.StatusInternalServerError, models.CommandResponse{
+			Success:  false,
+			Error:    fmt.Sprintf("Command execution failed: %s", err.Error()),
+			Command:  commandReq.Query,
+			Duration: duration,
+		})
+		return
+	}
+
+	log.Printf("✅ [command] Execution successful in %.2fms", duration)
+
+	c.JSON(http.StatusOK, models.CommandResponse{
+		Success:  true,
+		Message:  "Command executed successfully",
+		Result:   result,
+		Command:  commandReq.Query,
+		Duration: duration,
+	})
+}
+
+// SelectEndpoint godoc
+// @Summary Execute SELECT query
+// @Description Execute SELECT query and return data via JSON request
+// @Tags database
+// @Accept json
+// @Produce json
+// @Param select body models.SelectRequest true "SELECT query to execute"
+// @Success 200 {object} models.SelectResponse
+// @Router /select [post]
+func (h *APIHandler) SelectEndpoint(c *gin.Context) {
+	startTime := time.Now()
+
+	// Parse JSON request
+	var selectReq models.SelectRequest
+	if err := c.ShouldBindJSON(&selectReq); err != nil {
+		log.Printf("❌ [select] JSON bind error: %v", err)
+		c.JSON(http.StatusBadRequest, models.SelectResponse{
+			Success: false,
+			Error:   "Invalid JSON body: " + err.Error(),
+		})
+		return
+	}
+
+	log.Printf("🔍 [select] Executing query: %s", selectReq.Query)
+
+	ctx := c.Request.Context()
+
+	// Execute select query using ClickHouse service
+	data, err := h.clickHouseService.ExecuteSelect(ctx, selectReq.Query)
+	duration := float64(time.Since(startTime).Nanoseconds()) / 1e6
+
+	if err != nil {
+		log.Printf("❌ [select] Query failed: %v", err)
+		c.JSON(http.StatusInternalServerError, models.SelectResponse{
+			Success:  false,
+			Error:    fmt.Sprintf("Query execution failed: %s", err.Error()),
+			Query:    selectReq.Query,
+			Duration: duration,
+		})
+		return
+	}
+
+	rowCount := len(data)
+	log.Printf("✅ [select] Query successful: %d rows returned in %.2fms", rowCount, duration)
+
+	c.JSON(http.StatusOK, models.SelectResponse{
+		Success:  true,
+		Message:  fmt.Sprintf("Query executed successfully, %d rows returned", rowCount),
+		Data:     data,
+		Query:    selectReq.Query,
+		RowCount: rowCount,
+		Duration: duration,
+	})
+}
+
+// GuideEndpoint godoc
+// @Summary API Guide for AI Agents
+// @Description Complete API documentation and usage guide for AI agents and developers
+// @Tags documentation
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /guide [get]
+func (h *APIHandler) GuideEndpoint(c *gin.Context) {
+	guide := map[string]interface{}{
+		"api_name":      "SMLGOAPI",
+		"version":       "1.0.0",
+		"description":   "ClickHouse REST API with universal SQL execution, product search, and image proxy capabilities",
+		"base_url":      "http://localhost:8008",
+		"documentation": "Complete API guide for AI agents and developers",
+		"last_updated":  "2025-06-17",
+
+		"concepts": map[string]interface{}{
+			"overview": "SMLGOAPI is a REST API that provides universal access to ClickHouse database operations, advanced product search with vector similarity, and image proxy services.",
+			"core_features": []string{
+				"Universal SQL execution via JSON (any INSERT, UPDATE, DELETE, CREATE, SELECT)",
+				"Multi-step product search (code → name → vector similarity)",
+				"Image proxy with caching",
+				"Real-time health monitoring",
+				"CORS-enabled for frontend integration",
+			},
+			"data_flow": "Frontend → JSON Request → API → ClickHouse → JSON Response → Frontend",
+			"security":  "Open API (add authentication in production)",
+		},
+
+		"endpoints": map[string]interface{}{
+			"health_check": map[string]interface{}{
+				"method":     "GET",
+				"url":        "/health",
+				"purpose":    "Check API and database connectivity",
+				"parameters": "None",
+				"response_example": map[string]interface{}{
+					"status":    "healthy",
+					"timestamp": "2025-06-17T05:10:16.7356603+07:00",
+					"version":   "25.5.1.2782",
+					"database":  "connected",
+				},
+				"use_cases": []string{"Health monitoring", "Deployment verification", "Database connectivity check"},
+			},
+
+			"universal_command": map[string]interface{}{
+				"method":       "POST",
+				"url":          "/command",
+				"purpose":      "Execute any SQL command (CREATE, INSERT, UPDATE, DELETE, ALTER, DROP, etc.)",
+				"content_type": "application/json",
+				"request_format": map[string]interface{}{
+					"query": "string (required) - Any SQL command",
+				},
+				"request_example": map[string]interface{}{
+					"query": "CREATE TABLE IF NOT EXISTS test_api_guide (id UInt32, name String, price Float64, created_at DateTime DEFAULT now()) ENGINE = MergeTree() ORDER BY id",
+				},
+				"response_format": map[string]interface{}{
+					"success":     "boolean - Execution status",
+					"message":     "string - Result message",
+					"result":      "object - Command execution result",
+					"command":     "string - The executed command",
+					"duration_ms": "number - Execution time in milliseconds",
+				},
+				"response_example": map[string]interface{}{
+					"success":     true,
+					"message":     "Command executed successfully",
+					"result":      map[string]interface{}{"query": "CREATE TABLE IF NOT EXISTS test_api_guide (id UInt32, name String, price Float64, created_at DateTime DEFAULT now()) ENGINE = MergeTree() ORDER BY id", "rows_affected": 0, "status": "success"},
+					"command":     "CREATE TABLE IF NOT EXISTS test_api_guide (id UInt32, name String, price Float64, created_at DateTime DEFAULT now()) ENGINE = MergeTree() ORDER BY id",
+					"duration_ms": 550.0,
+				},
+				"example_queries": []string{
+					"CREATE TABLE IF NOT EXISTS test_api_guide (id UInt32, name String, price Float64, created_at DateTime DEFAULT now()) ENGINE = MergeTree() ORDER BY id",
+					"INSERT INTO test_api_guide (id, name, price) VALUES (1, 'Test Product', 99.99)",
+					"ALTER TABLE test_api_guide UPDATE price = 199.99 WHERE id = 1",
+					"ALTER TABLE test_api_guide DELETE WHERE id = 1",
+				},
+			},
+
+			"universal_select": map[string]interface{}{
+				"method":       "POST",
+				"url":          "/select",
+				"purpose":      "Execute SELECT queries and retrieve data",
+				"content_type": "application/json",
+				"request_format": map[string]interface{}{
+					"query": "string (required) - Any SELECT query",
+				},
+				"request_example": map[string]interface{}{
+					"query": "SELECT * FROM test_api_guide ORDER BY id",
+				},
+				"response_format": map[string]interface{}{
+					"success":     "boolean - Query status",
+					"message":     "string - Result message",
+					"data":        "array - Query result data",
+					"query":       "string - The executed query",
+					"row_count":   "number - Number of rows returned",
+					"duration_ms": "number - Execution time in milliseconds",
+				},
+				"response_example": map[string]interface{}{
+					"success": true,
+					"message": "Query executed successfully, 1 rows returned",
+					"data": []map[string]interface{}{
+						{"id": 1, "name": "Test Product", "price": 99.99, "created_at": "2025-06-16T23:40:33Z"},
+					},
+					"query":       "SELECT * FROM test_api_guide ORDER BY id",
+					"row_count":   1,
+					"duration_ms": 550.0,
+				},
+				"example_queries": []string{
+					"SELECT * FROM test_api_guide ORDER BY id",
+					"SELECT name FROM system.tables LIMIT 3",
+					"SELECT 1 as test, now() as timestamp",
+				},
+			},
+
+			"product_search": map[string]interface{}{
+				"method":       "POST",
+				"url":          "/search",
+				"purpose":      "Multi-step product search with priority: code → name → vector similarity",
+				"content_type": "application/json",
+				"request_format": map[string]interface{}{
+					"query": "string (required) - Search term",
+					"limit": "number (optional) - Max results (default: 10)",
+				},
+				"request_example": map[string]interface{}{
+					"query": "laptop gaming",
+					"limit": 5,
+				},
+				"response_format": map[string]interface{}{
+					"success": "boolean - Search status",
+					"message": "string - Search result message",
+					"data":    "array - Product results with flattened structure",
+					"metadata": map[string]interface{}{
+						"query":        "string - Search term",
+						"total_found":  "number - Total products found",
+						"search_steps": "array - Search steps executed",
+						"duration_ms":  "number - Search time",
+					},
+				},
+				"search_logic": map[string]interface{}{
+					"step_1":        "Code search (priority 1) - Exact product code matching",
+					"step_2":        "Name search (priority 2) - Product name pattern matching",
+					"step_3":        "Vector search (priority 3) - TF-IDF similarity search",
+					"deduplication": "Remove duplicates across steps",
+					"ranking":       "Results ordered by search step priority, then relevance",
+				},
+				"response_example": map[string]interface{}{
+					"success": true,
+					"message": "Search completed successfully",
+					"data": []map[string]interface{}{
+						{
+							"product_code":    "LAP001",
+							"product_name":    "Gaming Laptop RTX 4080",
+							"price":           1299.99,
+							"category":        "Electronics",
+							"search_step":     1,
+							"relevance_score": 1.0,
+						},
+					},
+					"metadata": map[string]interface{}{
+						"query":        "laptop gaming",
+						"total_found":  1,
+						"search_steps": []string{"code_search", "name_search", "vector_search"},
+						"duration_ms":  156.7,
+					},
+				},
+				"use_cases": []string{
+					"E-commerce product search",
+					"Inventory lookup",
+					"Product recommendations",
+					"Catalog browsing",
+				},
+			},
+
+			"image_proxy": map[string]interface{}{
+				"method":  "GET",
+				"url":     "/imgproxy",
+				"purpose": "Proxy and cache external images",
+				"parameters": map[string]interface{}{
+					"url": "string (required) - External image URL to proxy",
+				},
+				"request_example": "/imgproxy?url=https://example.com/image.jpg",
+				"response":        "Image binary data with appropriate headers",
+				"features": []string{
+					"Image caching for performance",
+					"CORS headers for frontend use",
+					"Support for various image formats",
+					"HEAD request support for metadata",
+				},
+				"use_cases": []string{
+					"Frontend image display",
+					"Bypass CORS restrictions",
+					"Image caching and optimization",
+				},
+			},
+
+			"database_tables": map[string]interface{}{
+				"method":     "GET",
+				"url":        "/api/tables",
+				"purpose":    "List all available database tables",
+				"parameters": "None",
+				"response_example": []map[string]interface{}{
+					{"name": "products", "engine": "MergeTree", "rows": 1500},
+					{"name": "categories", "engine": "MergeTree", "rows": 25},
+				},
+				"use_cases": []string{
+					"Database exploration",
+					"Schema discovery",
+					"Table listing for admin interfaces",
+				},
+			},
+
+			"api_documentation": map[string]interface{}{
+				"method":   "GET",
+				"url":      "/",
+				"purpose":  "Basic API information and endpoint list",
+				"response": "JSON object with API metadata and available endpoints",
+			},
+		},
+
+		"ai_agent_instructions": map[string]interface{}{
+			"overview": "This API is designed to be AI-friendly with comprehensive JSON responses and clear error messages.",
+			"best_practices": []string{
+				"Always check /health before executing operations",
+				"Use /command for data modification (INSERT, UPDATE, DELETE, CREATE)",
+				"Use /select for data retrieval and analytics",
+				"Handle both success and error responses appropriately",
+				"Check duration_ms for performance monitoring",
+				"Use proper JSON formatting in requests",
+			},
+			"error_handling": map[string]interface{}{
+				"all_endpoints_return": "Consistent JSON structure with success boolean",
+				"error_format": map[string]interface{}{
+					"success": false,
+					"error":   "Detailed error message",
+					"query":   "The query that failed (for SQL endpoints)",
+				},
+				"common_errors": []string{
+					"Invalid JSON syntax",
+					"SQL syntax errors",
+					"Database connection issues",
+					"Missing required parameters",
+				},
+			},
+			"data_types": map[string]interface{}{
+				"clickhouse_types": []string{"UInt32", "String", "Float64", "DateTime", "Array", "Nullable"},
+				"json_mapping":     "ClickHouse types automatically mapped to JSON equivalents",
+			},
+		},
+
+		"integration_examples": map[string]interface{}{
+			"curl_examples": map[string]interface{}{
+				"health_check":    "curl http://localhost:8008/health",
+				"create_table":    "curl -X POST http://localhost:8008/command -H 'Content-Type: application/json' -d '{\"query\": \"CREATE TABLE test (id UInt32, name String) ENGINE = MergeTree() ORDER BY id\"}'",
+				"insert_data":     "curl -X POST http://localhost:8008/command -H 'Content-Type: application/json' -d '{\"query\": \"INSERT INTO test VALUES (1, 'hello')\"}'",
+				"select_data":     "curl -X POST http://localhost:8008/select -H 'Content-Type: application/json' -d '{\"query\": \"SELECT * FROM test\"}'",
+				"search_products": "curl -X POST http://localhost:8008/search -H 'Content-Type: application/json' -d '{\"query\": \"laptop\", \"limit\": 5}'",
+			},
+			"javascript_fetch": map[string]interface{}{
+				"async_example": `
+async function executeSQL(endpoint, query) {
+  const response = await fetch('http://localhost:8008/' + endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: query })
+  });
+  return await response.json();
+}
+
+// Usage
+const result = await executeSQL('select', 'SELECT * FROM products LIMIT 5');
+`,
+			},
+		},
+
+		"production_considerations": map[string]interface{}{
+			"security": []string{
+				"Add authentication (JWT/API keys)",
+				"Implement query validation/whitelisting",
+				"Configure CORS for specific domains",
+				"Add rate limiting",
+				"Enable HTTPS",
+			},
+			"performance": []string{
+				"Monitor query execution times",
+				"Implement query caching",
+				"Use connection pooling (already implemented)",
+				"Add query timeout limits",
+				"Monitor memory usage",
+			},
+			"monitoring": []string{
+				"Log all SQL executions",
+				"Monitor error rates",
+				"Track response times",
+				"Set up health check alerts",
+			},
+		},
+
+		"database_schema": map[string]interface{}{
+			"note": "Use /api/tables to discover available tables",
+			"common_tables": []string{
+				"products - Product catalog data",
+				"categories - Product categories",
+				"system.tables - ClickHouse system table for metadata",
+			},
+			"query_tips": []string{
+				"Always use LIMIT for large result sets",
+				"Use proper WHERE clauses for filtering",
+				"Leverage ClickHouse's columnar storage with SELECT specific columns",
+				"Use ORDER BY for consistent result ordering",
+			},
+		},
+
+		"support_information": map[string]interface{}{
+			"troubleshooting": map[string]interface{}{
+				"connection_issues":  "Check /health endpoint and ClickHouse server status",
+				"query_errors":       "Validate SQL syntax and table/column names",
+				"cors_issues":        "API includes CORS headers for localhost and * origins",
+				"performance_issues": "Monitor duration_ms in responses",
+			},
+			"logs":    "Check server console for detailed error information",
+			"testing": "Use included Postman collection or test frontend HTML",
+		},
+	}
+
+	c.JSON(http.StatusOK, guide)
+}

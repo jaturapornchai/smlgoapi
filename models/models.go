@@ -36,3 +36,34 @@ type SearchRequest struct {
 	Limit  int    `json:"limit" form:"limit" example:"10"`
 	Offset int    `json:"offset" form:"offset" example:"0"`
 }
+
+// CommandRequest represents a command request for executing SQL commands
+type CommandRequest struct {
+	Query string `json:"query" binding:"required"` // SQL command to execute
+}
+
+// CommandResponse represents the response from command execution
+type CommandResponse struct {
+	Success  bool        `json:"success"`
+	Message  string      `json:"message,omitempty"`
+	Result   interface{} `json:"result,omitempty"`
+	Command  string      `json:"command,omitempty"`
+	Duration float64     `json:"duration_ms"`
+	Error    string      `json:"error,omitempty"`
+}
+
+// SelectRequest represents a select query request
+type SelectRequest struct {
+	Query string `json:"query" binding:"required"` // SELECT query to execute
+}
+
+// SelectResponse represents the response from select query
+type SelectResponse struct {
+	Success  bool          `json:"success"`
+	Message  string        `json:"message,omitempty"`
+	Data     []interface{} `json:"data,omitempty"`
+	Query    string        `json:"query,omitempty"`
+	RowCount int           `json:"row_count"`
+	Duration float64       `json:"duration_ms"`
+	Error    string        `json:"error,omitempty"`
+}
