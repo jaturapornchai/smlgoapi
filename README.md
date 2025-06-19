@@ -2,6 +2,36 @@
 
 REST API backend สำหรับเชื่อมต่อกับ ClickHouse database โดยใช้ Go + Gin framework พร้อม TF-IDF Vector Search และ Universal SQL Execution
 
+## 🔍 Search Features
+
+### Multi-Language Full Text Search
+- **Thai Language Support**: Full text search for Thai products (e.g., "ทองแดง", "คอยาว")
+- **English Language Support**: Full text search for English products (e.g., "coil", "brake")
+- **OR Logic**: Multi-word queries use OR logic for broader results
+- **Case-Insensitive**: Uses PostgreSQL ILIKE for case-insensitive matching
+- **Priority Scoring**: Results ranked by exact matches, code matches, and name matches
+
+### Search Endpoints
+- **GET Method**: `/v1/search?q=query&limit=10&offset=0`
+- **POST Method**: `/v1/search` with JSON body `{"query": "search term", "limit": 10, "offset": 0}`
+
+### Search Examples
+```bash
+# English search
+curl "http://localhost:8008/v1/search?q=coil&limit=5"
+
+# Thai search  
+curl "http://localhost:8008/v1/search?q=ทองแดง&limit=5"
+
+# Multi-word search
+curl "http://localhost:8008/v1/search?q=brake pad&limit=5"
+
+# POST method with JSON
+curl -X POST "http://localhost:8008/v1/search" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "coil", "limit": 5}'
+```
+
 ## 🤖 AI Agent Integration
 
 SMLGOAPI รองรับการใช้งานโดย AI agents โดยมี **`/guide` endpoint** ที่ให้ข้อมูลครบถ้วนเกี่ยวกับ API:

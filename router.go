@@ -53,7 +53,8 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 		v1.POST("/tambons", apiHandler.GetTambons)
 		v1.POST("/findbyzipcode", apiHandler.FindByZipCode)
 		// Search endpoints
-		v1.POST("/search", apiHandler.SearchProducts)
+		v1.GET("/search", apiHandler.SearchProducts)  // GET method for URL parameters
+		v1.POST("/search", apiHandler.SearchProducts) // POST method for JSON body
 
 		// Database endpoints
 		v1.GET("/tables", apiHandler.GetTables)

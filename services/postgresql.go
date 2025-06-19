@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"smlgoapi/config"
 	"smlgoapi/models"
@@ -147,7 +148,7 @@ func (s *PostgreSQLService) ExecuteSelect(ctx context.Context, query string) ([]
 	return results, nil
 }
 
-// SearchProducts performs a text-based search on the ic_inventory table in PostgreSQL
+// SearchProducts performs a full text search on the ic_inventory table in PostgreSQL
 func (s *PostgreSQLService) SearchProducts(ctx context.Context, query string, limit, offset int) ([]map[string]interface{}, int, error) {
 	// First check if the ic_inventory table exists
 	checkTableQuery := `
@@ -181,13 +182,43 @@ func (s *PostgreSQLService) SearchProducts(ctx context.Context, query string, li
 		}, 1, nil
 	}
 
+	// Split query into words for OR search
+	words := strings.Fields(strings.TrimSpace(query))
+	if len(words) == 0 {
+		words = []string{query} // If no spaces, use the whole query
+	}
+
+	// Build OR conditions for full text search - using ILIKE for better Unicode support
+	var orConditions []string
+	for range words {
+		orConditions = append(orConditions, "CAST(name AS TEXT) ILIKE ?")
+		orConditions = append(orConditions, "CAST(code AS TEXT) ILIKE ?")
+	}
+
+	// Convert PostgreSQL placeholder format
+	whereClause := strings.Join(orConditions, " OR ")
+	paramIndex := 1
+	for range orConditions {
+		whereClause = strings.Replace(whereClause, "?", fmt.Sprintf("$%d", paramIndex), 1)
+		paramIndex++
+	}
+
+	// Prepare parameters for count query
+	var countParams []interface{}
+	for _, word := range words {
+		if strings.TrimSpace(word) != "" {
+			countParams = append(countParams, "%"+word+"%") // name search
+			countParams = append(countParams, "%"+word+"%") // code search
+		}
+	}
+
 	// Get count of matching records
-	countQuery := `
+	countQuery := fmt.Sprintf(`
 		SELECT COUNT(*) as total_count
 		FROM ic_inventory 
-		WHERE LOWER(CAST(name AS TEXT)) LIKE LOWER($1) 
-		   OR LOWER(CAST(code AS TEXT)) LIKE LOWER($1)`
-	countRows, err := s.db.QueryContext(ctx, countQuery, "%"+query+"%")
+		WHERE %s`, whereClause)
+
+	countRows, err := s.db.QueryContext(ctx, countQuery, countParams...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to execute count query: %w", err)
 	}
@@ -198,25 +229,37 @@ func (s *PostgreSQLService) SearchProducts(ctx context.Context, query string, li
 		if err := countRows.Scan(&totalCount); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan count result: %w", err)
 		}
-	} // Now get the actual search results with pagination from ic_inventory
-	searchQuery := `
+	}
+
+	// Build search query with priority scoring
+	searchQuery := fmt.Sprintf(`
 		SELECT COALESCE(CAST(code AS TEXT), 'N/A') as code, 
 		       COALESCE(CAST(name AS TEXT), 'N/A') as name,
 		       COALESCE(CAST(unit_standard_code AS TEXT), 'N/A') as unit_standard_code,
 		       COALESCE(item_type, 0) as item_type,
 		       COALESCE(row_order_ref, 0) as row_order_ref,
 		       CASE 
-		           WHEN LOWER(CAST(code AS TEXT)) LIKE LOWER($1) THEN 3
-		           WHEN LOWER(CAST(name AS TEXT)) LIKE LOWER($1) THEN 2
+		           WHEN CAST(code AS TEXT) ILIKE $%d THEN 5
+		           WHEN CAST(code AS TEXT) ILIKE $%d THEN 3
+		           WHEN CAST(name AS TEXT) ILIKE $%d THEN 2
 		           ELSE 1
 		       END as search_priority
 		FROM ic_inventory 
-		WHERE LOWER(CAST(name AS TEXT)) LIKE LOWER($1) 
-		   OR LOWER(CAST(code AS TEXT)) LIKE LOWER($1)
-		ORDER BY search_priority DESC, name ASC
-		LIMIT $2 OFFSET $3`
+		WHERE %s
+		ORDER BY search_priority DESC, LENGTH(name) ASC, name ASC
+		LIMIT $%d OFFSET $%d`,
+		len(countParams)+1, len(countParams)+2, len(countParams)+3, whereClause, len(countParams)+4, len(countParams)+5)
 
-	rows, err := s.db.QueryContext(ctx, searchQuery, "%"+query+"%", limit, offset)
+	// Prepare parameters for search query
+	searchParams := make([]interface{}, 0)
+	searchParams = append(searchParams, countParams...) // word parameters
+	searchParams = append(searchParams, query)          // exact match for code
+	searchParams = append(searchParams, "%"+query+"%")  // like match for code
+	searchParams = append(searchParams, "%"+query+"%")  // like match for name
+	searchParams = append(searchParams, limit)          // limit
+	searchParams = append(searchParams, offset)         // offset
+
+	rows, err := s.db.QueryContext(ctx, searchQuery, searchParams...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to execute search query: %w", err)
 	}

@@ -115,26 +115,47 @@ func (h *APIHandler) GetTables(c *gin.Context) {
 }
 
 // SearchProducts godoc
-// @Summary Search products using vector similarity with JSON body
-// @Description Search for products using TF-IDF vector similarity with JSON request body (supports all languages)
+// @Summary Search products using vector similarity with JSON body or URL parameters
+// @Description Search for products using TF-IDF vector similarity (supports both JSON body and URL parameters for all languages)
 // @Tags search
 // @Accept json
 // @Produce json
-// @Param search body models.SearchParameters true "Search parameters"
+// @Param search body models.SearchParameters true "Search parameters (for POST requests)"
+// @Param q query string false "Search query (for GET requests)"
+// @Param limit query integer false "Maximum number of results (for GET requests)"
+// @Param offset query integer false "Offset for pagination (for GET requests)"
 // @Success 200 {object} models.APIResponse
 // @Router /search [post]
+// @Router /search [get]
 func (h *APIHandler) SearchProducts(c *gin.Context) {
 	startTime := time.Now()
 
-	// Parse JSON body directly
 	var params models.SearchParameters
-	if err := c.ShouldBindJSON(&params); err != nil {
-		log.Printf("❌ [decode] JSON bind error: %v", err)
-		c.JSON(http.StatusBadRequest, models.APIResponse{
-			Success: false,
-			Error:   "Invalid JSON body: " + err.Error(),
-		})
-		return
+
+	// Check if this is a GET request with query parameters
+	if c.Request.Method == "GET" {
+		// Parse URL query parameters
+		params.Query = c.Query("q")
+		if limit := c.Query("limit"); limit != "" {
+			if l, err := strconv.Atoi(limit); err == nil {
+				params.Limit = l
+			}
+		}
+		if offset := c.Query("offset"); offset != "" {
+			if o, err := strconv.Atoi(offset); err == nil {
+				params.Offset = o
+			}
+		}
+	} else {
+		// Parse JSON body for POST requests
+		if err := c.ShouldBindJSON(&params); err != nil {
+			log.Printf("❌ [decode] JSON bind error: %v", err)
+			c.JSON(http.StatusBadRequest, models.APIResponse{
+				Success: false,
+				Error:   "Invalid JSON body: " + err.Error(),
+			})
+			return
+		}
 	}
 
 	log.Printf("🔍 [decode] Parsed parameters: query='%s', limit=%d, offset=%d",
@@ -144,7 +165,7 @@ func (h *APIHandler) SearchProducts(c *gin.Context) {
 	if params.Query == "" {
 		c.JSON(http.StatusBadRequest, models.APIResponse{
 			Success: false,
-			Error:   "Query field is required in params JSON",
+			Error:   "Query field is required (use 'q' parameter for GET requests or 'query' field in JSON body for POST requests)",
 		})
 		return
 	}
