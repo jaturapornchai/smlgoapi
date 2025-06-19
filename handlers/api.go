@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"smlgoapi/models"
@@ -166,8 +167,8 @@ func (h *APIHandler) SearchProducts(c *gin.Context) {
 	fmt.Printf("\n🔍 Search: '%s' (limit: %d)\n", query, limit)
 	ctx := c.Request.Context()
 
-	// Perform vector search
-	results, err := h.vectorDB.SearchProducts(ctx, query, limit, offset)
+	// Perform PostgreSQL search instead of vector search
+	searchResults, totalCount, err := h.postgreSQLService.SearchProducts(ctx, query, limit, offset)
 	if err != nil {
 		duration := time.Since(startTime).Seconds() * 1000
 		fmt.Printf("❌ Error: %v (%.1fms)\n", err, duration)
@@ -177,6 +178,32 @@ func (h *APIHandler) SearchProducts(c *gin.Context) {
 			Error:   fmt.Sprintf("Search failed: %s", err.Error()),
 		})
 		return
+	}
+
+	// Convert PostgreSQL results to the expected format
+	var convertedResults []services.SearchResult
+	for _, result := range searchResults {
+		searchResult := services.SearchResult{
+			ID:              getStringValue(result, "id"),
+			Name:            getStringValue(result, "name"),
+			Code:            getStringValue(result, "code"),
+			Price:           getFloat64Value(result, "price"),
+			BalanceQty:      getFloat64Value(result, "balance_qty"),
+			Unit:            getStringValue(result, "unit"),
+			SupplierCode:    getStringValue(result, "supplier_code"),
+			ImgURL:          getStringValue(result, "img_url"),
+			SimilarityScore: getFloat64Value(result, "similarity_score"),
+			SearchPriority:  int(getFloat64Value(result, "search_priority")),
+		}
+		convertedResults = append(convertedResults, searchResult)
+	}
+
+	// Create response in the expected format
+	results := &services.VectorSearchResponse{
+		Data:       convertedResults,
+		TotalCount: totalCount,
+		Query:      query,
+		Duration:   time.Since(startTime).Seconds() * 1000,
 	}
 	duration := time.Since(startTime).Seconds() * 1000
 
@@ -570,10 +597,9 @@ func (h *APIHandler) GuideEndpoint(c *gin.Context) {
 					"query":       "SELECT * FROM test_api_guide ORDER BY id",
 					"row_count":   1,
 					"duration_ms": 550.0,
-				},
-				"example_queries": []string{
-					"SELECT * FROM test_api_guide ORDER BY id",
-					"SELECT name FROM system.tables LIMIT 3",
+				}, "example_queries": []string{
+					"SELECT * FROM ic_inventory ORDER BY name LIMIT 10",
+					"SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'",
 					"SELECT 1 as test, now() as timestamp",
 				},
 			},
@@ -1009,4 +1035,38 @@ func (h *APIHandler) FindByZipCode(c *gin.Context) {
 		Data:    locations,
 		Message: fmt.Sprintf("Found %d locations for zip code %d", len(locations), req.ZipCode),
 	})
+}
+
+// Helper functions for type conversion from map[string]interface{}
+func getStringValue(data map[string]interface{}, key string) string {
+	if val, ok := data[key]; ok {
+		if str, ok := val.(string); ok {
+			return str
+		}
+		if b, ok := val.([]uint8); ok {
+			return string(b)
+		}
+		return fmt.Sprintf("%v", val)
+	}
+	return ""
+}
+
+func getFloat64Value(data map[string]interface{}, key string) float64 {
+	if val, ok := data[key]; ok {
+		switch v := val.(type) {
+		case float64:
+			return v
+		case float32:
+			return float64(v)
+		case int:
+			return float64(v)
+		case int64:
+			return float64(v)
+		case string:
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				return f
+			}
+		}
+	}
+	return 0.0
 }
