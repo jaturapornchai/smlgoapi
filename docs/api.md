@@ -92,3 +92,90 @@ id = xtambon_id
 ## การใช้งาน:
 เหมาะสำหรับ address forms, location selectors, ระบบจัดการที่อยู่, และแอปพลิเคชันที่ต้องการข้อมูลการปกครองไทย
 
+## API PostgreSQL Database Endpoints
+
+### 🐘 PostgreSQL Command Execution
+**POST /pgcommand** และ **POST /v1/pgcommand**
+
+Execute any PostgreSQL SQL command (INSERT, UPDATE, DELETE, CREATE, etc.)
+
+Request Body:
+```json
+{
+  "query": "CREATE TABLE test_table (id SERIAL PRIMARY KEY, name VARCHAR(100))"
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "message": "PostgreSQL command executed successfully",
+  "result": {
+    "status": "success",
+    "rows_affected": 0,
+    "query": "CREATE TABLE test_table..."
+  },
+  "command": "CREATE TABLE test_table...",
+  "duration_ms": 15.2
+}
+```
+
+### 🔍 PostgreSQL Select Query
+**POST /pgselect** และ **POST /v1/pgselect**
+
+Execute PostgreSQL SELECT queries and return data
+
+Request Body:
+```json
+{
+  "query": "SELECT * FROM users LIMIT 10"
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "message": "PostgreSQL query executed successfully, 10 rows returned",
+  "data": [
+    {"id": 1, "name": "User 1", "email": "user1@example.com"},
+    {"id": 2, "name": "User 2", "email": "user2@example.com"}
+  ],
+  "query": "SELECT * FROM users LIMIT 10",
+  "row_count": 10,
+  "duration_ms": 8.5
+}
+```
+
+### 📊 Comparison: ClickHouse vs PostgreSQL Endpoints
+
+| Feature | ClickHouse | PostgreSQL |
+|---------|------------|------------|
+| Command Endpoint | `/command`, `/v1/command` | `/pgcommand`, `/v1/pgcommand` |
+| Select Endpoint | `/select`, `/v1/select` | `/pgselect`, `/v1/pgselect` |
+| Database Type | ClickHouse OLAP | PostgreSQL OLTP |
+| Use Cases | Analytics, Big Data, Reports | Transactions, CRUD, Relations |
+| Response Format | Identical JSON structure | Identical JSON structure |
+
+### 🔧 Configuration
+Configure PostgreSQL connection in `smlgoapi.json`:
+```json
+{
+  "postgresql": {
+    "host": "localhost",
+    "port": "5432",
+    "user": "postgres",
+    "password": "your_password",
+    "database": "your_database",
+    "sslmode": "disable"
+  }
+}
+```
+
+### ⚡ Performance & Error Handling
+- Both endpoints include execution time tracking
+- Standardized error responses
+- Same security and validation as ClickHouse endpoints
+- Full PostgreSQL transaction support
+

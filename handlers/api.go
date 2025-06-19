@@ -14,17 +14,22 @@ import (
 
 type APIHandler struct {
 	clickHouseService *services.ClickHouseService
+	postgreSQLService *services.PostgreSQLService
 	vectorDB          *services.TFIDFVectorDatabase
 	imageProxyService *services.ImageProxy
 	thaiAdminService  *services.ThaiAdminService
 }
 
-func NewAPIHandler(clickHouseService *services.ClickHouseService) *APIHandler {
-	vectorDB := services.NewTFIDFVectorDatabase(clickHouseService)
+func NewAPIHandler(clickHouseService *services.ClickHouseService, postgreSQLService *services.PostgreSQLService) *APIHandler {
+	var vectorDB *services.TFIDFVectorDatabase
+	if clickHouseService != nil {
+		vectorDB = services.NewTFIDFVectorDatabase(clickHouseService)
+	}
 	imageProxyService := services.NewImageProxy()
 	thaiAdminService := services.NewThaiAdminService()
 	return &APIHandler{
 		clickHouseService: clickHouseService,
+		postgreSQLService: postgreSQLService,
 		vectorDB:          vectorDB,
 		imageProxyService: imageProxyService,
 		thaiAdminService:  thaiAdminService,
@@ -41,19 +46,41 @@ func NewAPIHandler(clickHouseService *services.ClickHouseService) *APIHandler {
 func (h *APIHandler) HealthCheck(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	version, err := h.clickHouseService.GetVersion(ctx)
-	if err != nil {
-		c.JSON(http.StatusServiceUnavailable, models.APIResponse{
-			Success: false,
-			Error:   "Database connection failed: " + err.Error(),
-		})
-		return
+	var version string
+	var err error
+
+	if h.clickHouseService != nil {
+		version, err = h.clickHouseService.GetVersion(ctx)
+		if err != nil {
+			c.JSON(http.StatusServiceUnavailable, models.APIResponse{
+				Success: false,
+				Error:   "ClickHouse connection failed: " + err.Error(),
+			})
+			return
+		}
+	} else {
+		version = "ClickHouse unavailable"
+	}
+
+	// Test PostgreSQL connection
+	var pgVersion string
+	if h.postgreSQLService != nil {
+		pgVersion, err = h.postgreSQLService.GetVersion(ctx)
+		if err != nil {
+			c.JSON(http.StatusServiceUnavailable, models.APIResponse{
+				Success: false,
+				Error:   "PostgreSQL connection failed: " + err.Error(),
+			})
+			return
+		}
+	} else {
+		pgVersion = "PostgreSQL unavailable"
 	}
 
 	response := models.HealthResponse{
 		Status:    "healthy",
 		Timestamp: time.Now(),
-		Version:   version,
+		Version:   fmt.Sprintf("ClickHouse: %s, PostgreSQL: %s", version, pgVersion),
 		Database:  "connected",
 	}
 
@@ -320,10 +347,117 @@ func (h *APIHandler) SelectEndpoint(c *gin.Context) {
 
 	rowCount := len(data)
 	log.Printf("✅ [select] Query successful: %d rows returned in %.2fms", rowCount, duration)
-
 	c.JSON(http.StatusOK, models.SelectResponse{
 		Success:  true,
 		Message:  fmt.Sprintf("Query executed successfully, %d rows returned", rowCount),
+		Data:     data,
+		Query:    selectReq.Query,
+		RowCount: rowCount,
+		Duration: duration,
+	})
+}
+
+// PgCommandEndpoint godoc
+// @Summary Execute PostgreSQL database command
+// @Description Execute any PostgreSQL SQL command (INSERT, UPDATE, DELETE, CREATE, etc.) via JSON request
+// @Tags database
+// @Accept json
+// @Produce json
+// @Param command body models.CommandRequest true "Command to execute"
+// @Success 200 {object} models.CommandResponse
+// @Router /pgcommand [post]
+func (h *APIHandler) PgCommandEndpoint(c *gin.Context) {
+	startTime := time.Now()
+
+	// Parse JSON request
+	var commandReq models.CommandRequest
+	if err := c.ShouldBindJSON(&commandReq); err != nil {
+		log.Printf("❌ [pgcommand] JSON bind error: %v", err)
+		c.JSON(http.StatusBadRequest, models.CommandResponse{
+			Success: false,
+			Error:   "Invalid JSON body: " + err.Error(),
+		})
+		return
+	}
+
+	log.Printf("🐘 [pgcommand] Executing PostgreSQL command: %s", commandReq.Query)
+
+	ctx := c.Request.Context()
+
+	// Execute command using PostgreSQL service
+	result, err := h.postgreSQLService.ExecuteCommand(ctx, commandReq.Query)
+	duration := float64(time.Since(startTime).Nanoseconds()) / 1e6
+
+	if err != nil {
+		log.Printf("❌ [pgcommand] Execution failed: %v", err)
+		c.JSON(http.StatusInternalServerError, models.CommandResponse{
+			Success:  false,
+			Error:    fmt.Sprintf("PostgreSQL command execution failed: %s", err.Error()),
+			Command:  commandReq.Query,
+			Duration: duration,
+		})
+		return
+	}
+
+	log.Printf("✅ [pgcommand] Execution successful in %.2fms", duration)
+
+	c.JSON(http.StatusOK, models.CommandResponse{
+		Success:  true,
+		Message:  "PostgreSQL command executed successfully",
+		Result:   result,
+		Command:  commandReq.Query,
+		Duration: duration,
+	})
+}
+
+// PgSelectEndpoint godoc
+// @Summary Execute PostgreSQL SELECT query
+// @Description Execute PostgreSQL SELECT query and return data via JSON request
+// @Tags database
+// @Accept json
+// @Produce json
+// @Param select body models.SelectRequest true "SELECT query to execute"
+// @Success 200 {object} models.SelectResponse
+// @Router /pgselect [post]
+func (h *APIHandler) PgSelectEndpoint(c *gin.Context) {
+	startTime := time.Now()
+
+	// Parse JSON request
+	var selectReq models.SelectRequest
+	if err := c.ShouldBindJSON(&selectReq); err != nil {
+		log.Printf("❌ [pgselect] JSON bind error: %v", err)
+		c.JSON(http.StatusBadRequest, models.SelectResponse{
+			Success: false,
+			Error:   "Invalid JSON body: " + err.Error(),
+		})
+		return
+	}
+
+	log.Printf("🐘 [pgselect] Executing PostgreSQL query: %s", selectReq.Query)
+
+	ctx := c.Request.Context()
+
+	// Execute select query using PostgreSQL service
+	data, err := h.postgreSQLService.ExecuteSelect(ctx, selectReq.Query)
+	duration := float64(time.Since(startTime).Nanoseconds()) / 1e6
+
+	if err != nil {
+		log.Printf("❌ [pgselect] Query failed: %v", err)
+		c.JSON(http.StatusInternalServerError, models.SelectResponse{
+			Success:  false,
+			Error:    fmt.Sprintf("PostgreSQL query execution failed: %s", err.Error()),
+			Query:    selectReq.Query,
+			Duration: duration,
+		})
+		return
+	}
+
+	rowCount := len(data)
+	log.Printf("✅ [pgselect] Query successful: %d rows returned in %.2fms", rowCount, duration)
+
+	c.JSON(http.StatusOK, models.SelectResponse{
+		Success:  true,
+		Message:  fmt.Sprintf("PostgreSQL query executed successfully, %d rows returned", rowCount),
 		Data:     data,
 		Query:    selectReq.Query,
 		RowCount: rowCount,

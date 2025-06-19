@@ -11,6 +11,9 @@ require (
 	github.com/go-ego/gse v0.80.3
 	github.com/joho/godotenv v1.5.1
 	github.com/kljensen/snowball v0.10.0
+	github.com/lib/pq v1.10.9
+	github.com/patrickmn/go-cache v2.1.0+incompatible
+	golang.org/x/image v0.28.0
 )
 
 require (
@@ -36,7 +39,6 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
-	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
 	github.com/paulmach/orb v0.10.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.3 // indirect
 	github.com/pierrec/lz4/v4 v4.1.19 // indirect
@@ -50,7 +52,6 @@ require (
 	go.opentelemetry.io/otel/trace v1.21.0 // indirect
 	golang.org/x/arch v0.15.0 // indirect
 	golang.org/x/crypto v0.36.0 // indirect
-	golang.org/x/image v0.28.0 // indirect
 	golang.org/x/net v0.38.0 // indirect
 	golang.org/x/sys v0.31.0 // indirect
 	golang.org/x/text v0.26.0 // indirect

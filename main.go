@@ -47,25 +47,36 @@ func getDisplayURL(serverAddr string) string {
 func main() {
 	// Load configuration
 	cfg := config.LoadConfig()
-
 	// Initialize ClickHouse service
+	var clickHouseService *services.ClickHouseService
 	clickHouseService, err := services.NewClickHouseService(cfg)
 	if err != nil {
-		log.Fatalf("❌ Failed to initialize ClickHouse service: %v", err)
+		log.Printf("⚠️ ClickHouse service unavailable: %v", err)
+		log.Println("🔄 Continuing with PostgreSQL-only mode...")
+		clickHouseService = nil
+	} else {
+		defer clickHouseService.Close()
 	}
-	defer clickHouseService.Close()
+
+	// Initialize PostgreSQL service
+	postgreSQLService, err := services.NewPostgreSQLService(cfg)
+	if err != nil {
+		log.Fatalf("❌ Failed to initialize PostgreSQL service: %v", err)
+	}
+	defer postgreSQLService.Close()
 
 	// Initialize API handlers
-	apiHandler := handlers.NewAPIHandler(clickHouseService)
+	apiHandler := handlers.NewAPIHandler(clickHouseService, postgreSQLService)
 
 	// Setup Gin router
 	router := setupRouter(apiHandler)
-
 	// Create HTTP server
 	srv := &http.Server{
 		Addr:    cfg.GetServerAddress(),
 		Handler: router,
-	} // Start server in a goroutine
+	}
+
+	// Start server in a goroutine
 	go func() {
 		displayURL := getDisplayURL(cfg.GetServerAddress())
 		log.Printf("🚀 SMLGOAPI Server starting on %s", cfg.GetServerAddress())
@@ -74,6 +85,11 @@ func main() {
 			cfg.ClickHouse.Host,
 			cfg.ClickHouse.Port,
 			cfg.ClickHouse.Database)
+		log.Printf("🐘 PostgreSQL: %s@%s:%s/%s",
+			cfg.PostgreSQL.User,
+			cfg.PostgreSQL.Host,
+			cfg.PostgreSQL.Port,
+			cfg.PostgreSQL.Database)
 		log.Printf("🌐 API Endpoints:")
 		log.Printf("  - Health Check: http://%s/health", displayURL)
 		log.Printf("  - API v1 Base: http://%s/v1", displayURL)
@@ -110,8 +126,7 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 
 	// Middleware
 	router.Use(gin.Logger())
-	router.Use(gin.Recovery())
-	// CORS middleware
+	router.Use(gin.Recovery()) // CORS middleware
 	router.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"}, // In production, specify your frontend domain
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"},
@@ -119,7 +134,9 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
-	})) // Health check endpoint
+	}))
+
+	// Health check endpoint
 	router.GET("/health", apiHandler.HealthCheck)
 
 	// Legacy endpoints (maintain backwards compatibility)
@@ -128,6 +145,8 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 	router.HEAD("/imgproxy", apiHandler.ImageProxyHead)
 	router.POST("/command", apiHandler.CommandEndpoint)
 	router.POST("/select", apiHandler.SelectEndpoint)
+	router.POST("/pgcommand", apiHandler.PgCommandEndpoint)
+	router.POST("/pgselect", apiHandler.PgSelectEndpoint)
 
 	// API v1 routes
 	v1 := router.Group("/v1")
@@ -137,7 +156,6 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 		v1.POST("/amphures", apiHandler.GetAmphures)
 		v1.POST("/tambons", apiHandler.GetTambons)
 		v1.POST("/findbyzipcode", apiHandler.FindByZipCode)
-
 		// Search endpoints
 		v1.POST("/search", apiHandler.SearchProducts)
 
@@ -145,6 +163,8 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 		v1.GET("/tables", apiHandler.GetTables)
 		v1.POST("/command", apiHandler.CommandEndpoint)
 		v1.POST("/select", apiHandler.SelectEndpoint)
+		v1.POST("/pgcommand", apiHandler.PgCommandEndpoint)
+		v1.POST("/pgselect", apiHandler.PgSelectEndpoint)
 
 		// Image proxy endpoints
 		v1.GET("/imgproxy", apiHandler.ImageProxy)
@@ -172,11 +192,10 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{
 			"message":     "SMLGOAPI - ClickHouse REST API",
 			"version":     "1.0.0",
-			"api_version": "v1", "endpoints": gin.H{
+			"api_version": "v1",
+			"endpoints": gin.H{
 				// Core endpoints
-				"health": "GET /health",
-
-				// API v1 endpoints (recommended)
+				"health":           "GET /health", // API v1 endpoints (recommended)
 				"v1_provinces":     "POST /v1/provinces",
 				"v1_amphures":      "POST /v1/amphures",
 				"v1_tambons":       "POST /v1/tambons",
@@ -184,6 +203,8 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 				"v1_search":        "POST /v1/search",
 				"v1_command":       "POST /v1/command",
 				"v1_select":        "POST /v1/select",
+				"v1_pgcommand":     "POST /v1/pgcommand",
+				"v1_pgselect":      "POST /v1/pgselect",
 				"v1_tables":        "GET /v1/tables",
 				"v1_imgproxy":      "GET /v1/imgproxy?url=<image_url>",
 
@@ -195,6 +216,8 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 				"search":        "POST /search",
 				"command":       "POST /command",
 				"select":        "POST /select",
+				"pgcommand":     "POST /pgcommand",
+				"pgselect":      "POST /pgselect",
 				"tables":        "GET /api/tables",
 				"imgproxy":      "GET /imgproxy?url=<image_url>",
 			},
