@@ -107,10 +107,10 @@ curl http://localhost:8008/guide
    ssh root@143.198.192.64
    
    # เข้าไปยังโฟลเดอร์โปรเจค
-   cd /data/vectorapi-dev/
+   cd /data/smlgoapi/
    
    # ดึง Docker image ล่าสุดจาก registry
-   docker pull ghcr.io/smlsoft/vectordbapi:main
+   docker pull ghcr.io/jaturapornchai/smlgoapi:master
    
    # รีสตาร์ท containers
    docker compose up -d
