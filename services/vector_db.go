@@ -41,6 +41,18 @@ type SearchResult struct {
 	Unit            string  `json:"unit"`
 	ImgURL          string  `json:"img_url"`
 	SearchPriority  int     `json:"search_priority"`
+
+	// New pricing and inventory fields
+	SalePrice        float64 `json:"sale_price"`
+	PremiumWord      string  `json:"premium_word"`
+	DiscountPrice    float64 `json:"discount_price"`
+	DiscountPercent  float64 `json:"discount_percent"`
+	FinalPrice       float64 `json:"final_price"`
+	SoldQty          float64 `json:"sold_qty"`
+	MultiPacking     int     `json:"multi_packing"`
+	MultiPackingName string  `json:"multi_packing_name"`
+	Barcodes         string  `json:"barcodes"`
+	QtyAvailable     float64 `json:"qty_available"`
 }
 
 type VectorSearchResponse struct {

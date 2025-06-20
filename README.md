@@ -10,26 +10,43 @@ REST API backend สำหรับเชื่อมต่อกับ ClickHou
 - **OR Logic**: Multi-word queries use OR logic for broader results
 - **Case-Insensitive**: Uses PostgreSQL ILIKE for case-insensitive matching
 - **Priority Scoring**: Results ranked by exact matches, code matches, and name matches
+- **🤖 AI Query Enhancement**: AI-powered query enhancement for better results
 
 ### Search Endpoints
-- **GET Method**: `/v1/search?q=query&limit=10&offset=0`
-- **POST Method**: `/v1/search` with JSON body `{"query": "search term", "limit": 10, "offset": 0}`
+- **GET Method**: `/v1/search?q=query&limit=10&offset=0&ai=0`
+- **POST Method**: `/v1/search` with JSON body `{"query": "search term", "limit": 10, "offset": 0, "ai": 0}`
+
+### AI Parameter (Powered by DeepSeek AI)
+- **ai=0**: ไม่ใช้ AI (default) - ค้นหาด้วยคำค้นต้นฉบับ
+- **ai=1**: ใช้ DeepSeek AI ปรับปรุงคำค้น - AI จะช่วยแปล ปรับปรุง และแก้ไขคำค้นให้ดีขึ้น
+
+### 🧠 DeepSeek AI Features:
+- **Thai ↔ English Translation**: แปลคำไทยเป็นอังกฤษอัตโนมัติ
+- **Typo Correction**: แก้ไขคำผิด (เช่น "break" → "brake")
+- **Plural to Singular**: แปลง (เช่น "coils" → "coil")
+- **Query Optimization**: ปรับปรุงคำค้นให้เหมาะสมกับฐานข้อมูลอะไหล่รถยนต์
+- **Fallback Support**: หาก DeepSeek API ไม่พร้อมใช้งาน จะใช้ระบบสำรอง
 
 ### Search Examples
 ```bash
-# English search
-curl "http://localhost:8008/v1/search?q=coil&limit=5"
+# English search (no AI)
+curl "http://localhost:8008/v1/search?q=coil&limit=5&ai=0"
 
-# Thai search  
-curl "http://localhost:8008/v1/search?q=ทองแดง&limit=5"
+# Thai search with AI enhancement
+curl "http://localhost:8008/v1/search?q=เบรค&limit=5&ai=1"
 
-# Multi-word search
-curl "http://localhost:8008/v1/search?q=brake pad&limit=5"
+# Multi-word search with AI
+curl "http://localhost:8008/v1/search?q=brake pad&limit=5&ai=1"
 
-# POST method with JSON
+# POST method with AI enabled
 curl -X POST "http://localhost:8008/v1/search" \
   -H "Content-Type: application/json" \
-  -d '{"query": "coil", "limit": 5}'
+  -d '{"query": "เบรค", "limit": 5, "ai": 1}'
+
+# AI query enhancement examples:
+# "เบรค" with ai=1 → enhanced to "brake"
+# "break" with ai=1 → corrected to "brake"  
+# "coils" with ai=1 → normalized to "coil"
 ```
 
 ## 🤖 AI Agent Integration

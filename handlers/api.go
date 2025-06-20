@@ -1,16 +1,45 @@
 package handlers
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"smlgoapi/models"
 	"smlgoapi/services"
 
 	"github.com/gin-gonic/gin"
+)
+
+// DeepSeek API structures
+type DeepSeekRequest struct {
+	Model    string    `json:"model"`
+	Messages []Message `json:"messages"`
+}
+
+type Message struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type DeepSeekResponse struct {
+	Choices []Choice `json:"choices"`
+}
+
+type Choice struct {
+	Message Message `json:"message"`
+}
+
+const (
+	DeepSeekAPIURL = "https://api.deepseek.com/v1/chat/completions"
+	DeepSeekAPIKey = "sk-f57e7b56ab3f4f1a8030b7ae57500b85"
+	DeepSeekModel  = "deepseek-chat"
 )
 
 type APIHandler struct {
@@ -116,7 +145,7 @@ func (h *APIHandler) GetTables(c *gin.Context) {
 
 // SearchProducts godoc
 // @Summary Search products using vector similarity with JSON body or URL parameters
-// @Description Search for products using TF-IDF vector similarity (supports both JSON body and URL parameters for all languages)
+// @Description Search for products using TF-IDF vector similarity (supports both JSON body and URL parameters for all languages). AI parameter: 0=no AI enhancement, 1=use AI to enhance query
 // @Tags search
 // @Accept json
 // @Produce json
@@ -124,6 +153,7 @@ func (h *APIHandler) GetTables(c *gin.Context) {
 // @Param q query string false "Search query (for GET requests)"
 // @Param limit query integer false "Maximum number of results (for GET requests)"
 // @Param offset query integer false "Offset for pagination (for GET requests)"
+// @Param ai query integer false "AI mode: 0=no AI enhancement, 1=use AI to enhance query (for GET requests)"
 // @Success 200 {object} models.APIResponse
 // @Router /search [post]
 // @Router /search [get]
@@ -146,6 +176,11 @@ func (h *APIHandler) SearchProducts(c *gin.Context) {
 				params.Offset = o
 			}
 		}
+		if ai := c.Query("ai"); ai != "" {
+			if a, err := strconv.Atoi(ai); err == nil {
+				params.AI = a
+			}
+		}
 	} else {
 		// Parse JSON body for POST requests
 		if err := c.ShouldBindJSON(&params); err != nil {
@@ -158,8 +193,8 @@ func (h *APIHandler) SearchProducts(c *gin.Context) {
 		}
 	}
 
-	log.Printf("🔍 [decode] Parsed parameters: query='%s', limit=%d, offset=%d",
-		params.Query, params.Limit, params.Offset)
+	log.Printf("🔍 [decode] Parsed parameters: query='%s', limit=%d, offset=%d, ai=%d",
+		params.Query, params.Limit, params.Offset, params.AI)
 
 	// Validate query
 	if params.Query == "" {
@@ -171,6 +206,20 @@ func (h *APIHandler) SearchProducts(c *gin.Context) {
 	}
 
 	query := params.Query
+
+	// AI Enhancement Processing
+	if params.AI == 1 {
+		log.Printf("🤖 [ai] AI mode enabled, enhancing query: '%s'", query)
+		enhancedQuery := h.enhanceQueryWithAI(query)
+		if enhancedQuery != query {
+			log.Printf("🤖 [ai] Query enhanced from '%s' to '%s'", query, enhancedQuery)
+			query = enhancedQuery
+		} else {
+			log.Printf("🤖 [ai] Query unchanged after AI processing")
+		}
+	} else {
+		log.Printf("💭 [ai] AI mode disabled (ai=0), using original query")
+	}
 
 	// Set default values
 	limit := params.Limit
@@ -185,7 +234,7 @@ func (h *APIHandler) SearchProducts(c *gin.Context) {
 	if offset < 0 {
 		offset = 0
 	} // Simple logging
-	fmt.Printf("\n🔍 Search: '%s' (limit: %d)\n", query, limit)
+	fmt.Printf("\n🔍 Search: '%s' (limit: %d, ai: %d)\n", query, limit, params.AI)
 	ctx := c.Request.Context()
 
 	// Perform PostgreSQL search instead of vector search
@@ -215,6 +264,18 @@ func (h *APIHandler) SearchProducts(c *gin.Context) {
 			ImgURL:          getStringValue(result, "img_url"),
 			SimilarityScore: getFloat64Value(result, "similarity_score"),
 			SearchPriority:  int(getFloat64Value(result, "search_priority")),
+
+			// New fields
+			SalePrice:        getFloat64Value(result, "sale_price"),
+			PremiumWord:      getStringValue(result, "premium_word"),
+			DiscountPrice:    getFloat64Value(result, "discount_price"),
+			DiscountPercent:  getFloat64Value(result, "discount_percent"),
+			FinalPrice:       getFloat64Value(result, "final_price"),
+			SoldQty:          getFloat64Value(result, "sold_qty"),
+			MultiPacking:     int(getFloat64Value(result, "multi_packing")),
+			MultiPackingName: getStringValue(result, "multi_packing_name"),
+			Barcodes:         getStringValue(result, "barcodes"),
+			QtyAvailable:     getFloat64Value(result, "qty_available"),
 		}
 		convertedResults = append(convertedResults, searchResult)
 	}
@@ -523,23 +584,34 @@ func (h *APIHandler) PgSelectEndpoint(c *gin.Context) {
 func (h *APIHandler) GuideEndpoint(c *gin.Context) {
 	guide := map[string]interface{}{
 		"api_name":      "SMLGOAPI",
-		"version":       "1.0.0",
-		"description":   "ClickHouse REST API with universal SQL execution, product search, and image proxy capabilities",
-		"base_url":      "http://localhost:8008",
-		"documentation": "Complete API guide for AI agents and developers",
-		"last_updated":  "2025-06-17",
+		"version":       "2.0.0",
+		"description":   "Advanced Auto Parts API with AI-powered search, multi-language support, and PostgreSQL backend",
+		"base_url":      "http://localhost:8008/v1",
+		"documentation": "Complete API guide for AI agents, developers, and frontend applications",
+		"last_updated":  "2025-06-20",
 
 		"concepts": map[string]interface{}{
-			"overview": "SMLGOAPI is a REST API that provides universal access to ClickHouse database operations, advanced product search with vector similarity, and image proxy services.",
+			"overview": "SMLGOAPI is a modern REST API providing intelligent auto parts search with AI translation assistance, multi-language support (Thai/English), and comprehensive database operations.",
 			"core_features": []string{
-				"Universal SQL execution via JSON (any INSERT, UPDATE, DELETE, CREATE, SELECT)",
-				"Multi-step product search (code → name → vector similarity)",
-				"Image proxy with caching",
-				"Real-time health monitoring",
-				"CORS-enabled for frontend integration",
+				"🤖 AI-powered query enhancement with DeepSeek API integration",
+				"🌐 Multi-language search support (Thai ↔ English translation)",
+				"🔍 Full-text search in part codes and names with OR logic",
+				"🎯 Smart typo correction and query optimization",
+				"🗄️ PostgreSQL and ClickHouse dual database support",
+				"📷 Image proxy with intelligent caching",
+				"⚡ Real-time health monitoring and performance metrics",
+				"🌍 CORS-enabled for seamless frontend integration",
 			},
-			"data_flow": "Frontend → JSON Request → API → ClickHouse → JSON Response → Frontend",
-			"security":  "Open API (add authentication in production)",
+			"new_features_v2": []string{
+				"AI translation assistant for automotive terms",
+				"Enhanced search with both original and translated terms",
+				"Fallback enhancement for offline AI scenarios",
+				"SQL query logging for debugging",
+				"Improved error handling without mock data",
+				"Search limited to code and name fields for better accuracy",
+			},
+			"data_flow": "Frontend → AI Translation → Enhanced Query → PostgreSQL → Structured Results → Frontend",
+			"security":  "Open API (implement authentication for production use)",
 		},
 
 		"endpoints": map[string]interface{}{
@@ -626,61 +698,162 @@ func (h *APIHandler) GuideEndpoint(c *gin.Context) {
 			},
 
 			"product_search": map[string]interface{}{
-				"method":       "POST",
-				"url":          "/search",
-				"purpose":      "Multi-step product search with priority: code → name → vector similarity",
+				"methods":      []string{"GET", "POST"},
+				"urls":         []string{"/v1/search", "/search"},
+				"purpose":      "🚀 AI-powered auto parts search with multi-language support and intelligent query enhancement",
 				"content_type": "application/json",
-				"request_format": map[string]interface{}{
-					"query": "string (required) - Search term",
-					"limit": "number (optional) - Max results (default: 10)",
-				},
-				"request_example": map[string]interface{}{
-					"query": "laptop gaming",
-					"limit": 5,
-				},
-				"response_format": map[string]interface{}{
-					"success": "boolean - Search status",
-					"message": "string - Search result message",
-					"data":    "array - Product results with flattened structure",
-					"metadata": map[string]interface{}{
-						"query":        "string - Search term",
-						"total_found":  "number - Total products found",
-						"search_steps": "array - Search steps executed",
-						"duration_ms":  "number - Search time",
+
+				"request_formats": map[string]interface{}{
+					"GET": map[string]interface{}{
+						"url_parameters": map[string]interface{}{
+							"q":      "string (required) - Search query (supports Thai and English)",
+							"limit":  "number (optional) - Max results (default: 10, max: 100)",
+							"offset": "number (optional) - Pagination offset (default: 0)",
+							"ai":     "number (optional) - AI enhancement mode (0=off, 1=on, default: 0)",
+						},
+						"example_url": "/v1/search?q=โตโยต้า+เบรค&limit=5&ai=1",
 					},
-				},
-				"search_logic": map[string]interface{}{
-					"step_1":        "Code search (priority 1) - Exact product code matching",
-					"step_2":        "Name search (priority 2) - Product name pattern matching",
-					"step_3":        "Vector search (priority 3) - TF-IDF similarity search",
-					"deduplication": "Remove duplicates across steps",
-					"ranking":       "Results ordered by search step priority, then relevance",
-				},
-				"response_example": map[string]interface{}{
-					"success": true,
-					"message": "Search completed successfully",
-					"data": []map[string]interface{}{
-						{
-							"product_code":    "LAP001",
-							"product_name":    "Gaming Laptop RTX 4080",
-							"price":           1299.99,
-							"category":        "Electronics",
-							"search_step":     1,
-							"relevance_score": 1.0,
+					"POST": map[string]interface{}{
+						"body_parameters": map[string]interface{}{
+							"query":  "string (required) - Search query",
+							"limit":  "number (optional) - Max results (default: 10, max: 100)",
+							"offset": "number (optional) - Pagination offset (default: 0)",
+							"ai":     "number (optional) - AI enhancement mode (0=off, 1=on, default: 0)",
+						},
+						"example_body": map[string]interface{}{
+							"query":  "toyota brake",
+							"limit":  5,
+							"offset": 0,
+							"ai":     1,
 						},
 					},
-					"metadata": map[string]interface{}{
-						"query":        "laptop gaming",
-						"total_found":  1,
-						"search_steps": []string{"code_search", "name_search", "vector_search"},
-						"duration_ms":  156.7,
+				},
+
+				"ai_enhancement": map[string]interface{}{
+					"description": "🤖 AI-powered query enhancement using DeepSeek API",
+					"features": []string{
+						"Thai ↔ English translation (โตโยต้า ↔ toyota)",
+						"Typo correction (break → brake)",
+						"Term expansion (brake → brake เบรค brakes)",
+						"Automotive terminology optimization",
+						"Multi-keyword generation for comprehensive search",
+					},
+					"examples": map[string]interface{}{
+						"thai_input":    "เบรค → เบรค brake brakes ระบบเบรค brake pad",
+						"typo_fix":      "break → brake เบรค brakes",
+						"brand_enhance": "toyoda → toyota โตโยต้า TOYOTA",
+					},
+					"fallback": "Local enhancement rules when AI API is unavailable",
+				},
+
+				"search_algorithm": map[string]interface{}{
+					"scope":         "Searches only in 'code' and 'name' fields for maximum accuracy",
+					"logic":         "Full-text OR search - each word creates OR conditions",
+					"priority":      "Code exact match > Code partial > Name partial",
+					"unicode":       "Full Unicode support for Thai text using ILIKE",
+					"deduplication": "Automatic duplicate removal",
+					"ordering":      "Priority score DESC → Name length ASC → Name alphabetical",
+				},
+
+				"response_format": map[string]interface{}{
+					"success": "boolean - Search execution status",
+					"message": "string - Human-readable result message",
+					"data": map[string]interface{}{
+						"data":        "array - Product results",
+						"total_count": "number - Total matching products found",
+						"query":       "string - Final query used (may be AI-enhanced)",
+						"duration":    "number - Search execution time in milliseconds",
+					},
+					"product_fields": map[string]interface{}{
+						"id":               "string - Product identifier (same as code)",
+						"code":             "string - Product code/SKU",
+						"name":             "string - Product name",
+						"similarity_score": "number - Search relevance score",
+						"balance_qty":      "number - Available quantity",
+						"price":            "number - Product price",
+						"supplier_code":    "string - Supplier identifier",
+						"search_priority":  "number - Internal priority score",
 					},
 				},
+
+				"response_examples": map[string]interface{}{
+					"successful_search": map[string]interface{}{
+						"success": true,
+						"message": "Search completed successfully",
+						"data": map[string]interface{}{
+							"data": []map[string]interface{}{
+								{
+									"id":               "A-88711-0KC50",
+									"name":             "ท่อแอร์ TOYOTA",
+									"code":             "A-88711-0KC50",
+									"similarity_score": 1.0,
+									"balance_qty":      0.0,
+									"price":            0.0,
+									"supplier_code":    "N/A",
+									"search_priority":  5,
+								},
+							},
+							"total_count": 2182,
+							"query":       "toyota brake (AI enhanced)",
+							"duration":    525.3,
+						},
+					},
+					"no_results": map[string]interface{}{
+						"success": true,
+						"message": "No products found matching your search criteria",
+						"data": map[string]interface{}{
+							"data":        []interface{}{},
+							"total_count": 0,
+							"query":       "nonexistent part",
+							"duration":    45.2,
+						},
+					},
+					"error_response": map[string]interface{}{
+						"success": false,
+						"error":   "Search failed: table 'ic_inventory' not found in database",
+					},
+				},
+
+				"practical_examples": map[string]interface{}{
+					"basic_search": map[string]interface{}{
+						"description": "Simple search without AI",
+						"curl":        `curl -X GET "http://localhost:8008/v1/search?q=toyota&limit=5"`,
+						"javascript":  `fetch('/v1/search?q=toyota&limit=5').then(r => r.json())`,
+					},
+					"ai_enhanced_search": map[string]interface{}{
+						"description": "AI-powered search with translation",
+						"curl":        `curl -X GET "http://localhost:8008/v1/search?q=เบรค&ai=1&limit=10"`,
+						"javascript":  `fetch('/v1/search?q=เบรค&ai=1&limit=10').then(r => r.json())`,
+					},
+					"post_search": map[string]interface{}{
+						"description": "POST request with JSON body",
+						"curl":        `curl -X POST "http://localhost:8008/v1/search" -H "Content-Type: application/json" -d '{"query": "toyota compressor", "ai": 1, "limit": 5}'`,
+						"javascript":  `fetch('/v1/search', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({query: 'toyota compressor', ai: 1, limit: 5})})`,
+					},
+					"pagination": map[string]interface{}{
+						"description": "Paginated search results",
+						"curl":        `curl -X GET "http://localhost:8008/v1/search?q=brake&limit=20&offset=40"`,
+						"javascript":  `fetch('/v1/search?q=brake&limit=20&offset=40').then(r => r.json())`,
+					},
+				},
+
 				"use_cases": []string{
-					"E-commerce product search",
-					"Inventory lookup",
-					"Product recommendations",
-					"Catalog browsing",
+					"🏪 E-commerce auto parts search",
+					"📦 Inventory management systems",
+					"🔧 Service workshop part lookup",
+					"🤖 AI chatbot integration for customer service",
+					"📱 Mobile app product discovery",
+					"🌐 Multi-language marketplace platforms",
+					"📊 Analytics and business intelligence",
+					"🔍 Advanced filtering and recommendation engines",
+				},
+
+				"performance_tips": []string{
+					"Use specific search terms for faster results",
+					"Enable AI (ai=1) for cross-language searches",
+					"Use pagination for large result sets",
+					"Cache common search results on frontend",
+					"Monitor duration field for performance optimization",
 				},
 			},
 
@@ -1090,4 +1263,187 @@ func getFloat64Value(data map[string]interface{}, key string) float64 {
 		}
 	}
 	return 0.0
+}
+
+// enhanceQueryWithAI enhances the search query using DeepSeek AI API
+// This function applies AI-based query enhancement when ai=1 parameter is used
+func (h *APIHandler) enhanceQueryWithAI(originalQuery string) string {
+	log.Printf("🤖 [ai_enhance] Processing query with DeepSeek AI: '%s'", originalQuery)
+
+	// Call DeepSeek API
+	enhancedQuery, err := h.callDeepSeekAPI(originalQuery)
+	if err != nil {
+		log.Printf("❌ [ai_enhance] DeepSeek API error: %v, using fallback", err)
+		return h.fallbackEnhancement(originalQuery)
+	}
+
+	if enhancedQuery != originalQuery {
+		log.Printf("🤖 [ai_enhance] DeepSeek enhanced: '%s' -> '%s'", originalQuery, enhancedQuery)
+		return enhancedQuery
+	}
+
+	log.Printf("🤖 [ai_enhance] DeepSeek returned same query: '%s'", originalQuery)
+	return originalQuery
+}
+
+// callDeepSeekAPI calls the DeepSeek API for query enhancement
+func (h *APIHandler) callDeepSeekAPI(query string) (string, error) {
+	prompt := fmt.Sprintf(`You are a translation assistant for automotive parts database search. Your job is to help users find parts by providing both the original term and its translations, creating the most comprehensive search query possible.
+
+RULES:
+1. Always include BOTH the original query AND translations
+2. Support Thai ↔ English translation for automotive terms
+3. Fix common typos and provide correct spellings
+4. Include both singular and plural forms when relevant
+5. Add related terms that users might search for
+6. Return multiple terms separated by spaces for OR search logic
+
+TRANSLATION EXAMPLES:
+- "โตโยต้า" → "โตโยต้า toyota TOYOTA"
+- "เบรค" → "เบรค brake brakes"
+- "toyota" → "toyota โตโยต้า TOYOTA"
+- "brake" → "brake เบรค brakes"
+- "โชคอัมพาต" → "โชคอัมพาต shock absorber damper"
+
+TYPO CORRECTION:
+- "toyoda" → "toyota โตโยต้า TOYOTA"
+- "break" → "brake เบรค brakes"
+- "compresser" → "compressor คอมเพรสเซอร์"
+
+Return ALL relevant search terms separated by spaces (for OR search logic).
+
+User query: %s
+
+Enhanced search terms:`, query)
+
+	reqBody := DeepSeekRequest{
+		Model: DeepSeekModel,
+		Messages: []Message{
+			{
+				Role:    "user",
+				Content: prompt,
+			},
+		},
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", DeepSeekAPIURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+DeepSeekAPIKey)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to call API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var deepSeekResp DeepSeekResponse
+	if err := json.Unmarshal(body, &deepSeekResp); err != nil {
+		return "", fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	if len(deepSeekResp.Choices) == 0 {
+		return "", fmt.Errorf("no choices in response")
+	}
+
+	enhancedQuery := strings.TrimSpace(deepSeekResp.Choices[0].Message.Content)
+	return enhancedQuery, nil
+}
+
+// fallbackEnhancement provides a fallback enhancement when DeepSeek API fails
+// Returns multiple search terms including original and translations
+func (h *APIHandler) fallbackEnhancement(originalQuery string) string {
+	log.Printf("🔄 [ai_enhance] Using fallback enhancement for: '%s'", originalQuery)
+
+	// Normalize the query (trim and lowercase for comparison)
+	normalizedQuery := strings.TrimSpace(strings.ToLower(originalQuery))
+
+	// Translation and enhancement rules - return multiple terms
+	enhancements := map[string]string{
+		// Thai to English with both forms
+		"เบรค":      "เบรค brake brakes",
+		"ผ้าเบรค":   "ผ้าเบรค brake pad brakes",
+		"โตโยต้า":   "โตโยต้า toyota TOYOTA",
+		"น้ำมัน":    "น้ำมัน oil",
+		"ไฟ":        "ไฟ light lights",
+		"ล้อ":       "ล้อ wheel wheels",
+		"ยาง":       "ยาง tire tires",
+		"แบตเตอรี่": "แบตเตอรี่ battery",
+		"คอยล์":     "คอยล์ coil coils",
+		"โชคอัมพาต": "โชคอัมพาต shock absorber damper",
+
+		// English to Thai with variants
+		"toyota":  "toyota โตโยต้า TOYOTA",
+		"brake":   "brake เบรค brakes",
+		"oil":     "oil น้ำมัน",
+		"light":   "light ไฟ lights",
+		"wheel":   "wheel ล้อ wheels",
+		"tire":    "tire ยาง tires",
+		"battery": "battery แบตเตอรี่",
+		"coil":    "coil คอยล์ coils",
+		"shock":   "shock โชคอัมพาต absorber",
+
+		// Common typos with corrections
+		"break":      "brake เบรค brakes",
+		"toyoda":     "toyota โตโยต้า TOYOTA",
+		"compresser": "compressor คอมเพรสเซอร์",
+	}
+
+	// Check for direct enhancements
+	if enhanced, exists := enhancements[normalizedQuery]; exists {
+		log.Printf("🔄 [ai_enhance] Fallback enhancement: '%s' -> '%s'", originalQuery, enhanced)
+		return enhanced
+	}
+
+	// Check for partial matches and expansions
+	var allTerms []string
+	allTerms = append(allTerms, originalQuery) // Always include original
+
+	for key, value := range enhancements {
+		if strings.Contains(normalizedQuery, key) {
+			// Add all terms from the enhancement
+			terms := strings.Fields(value)
+			allTerms = append(allTerms, terms...)
+			break
+		}
+	}
+
+	// Remove duplicates and return
+	uniqueTerms := make(map[string]bool)
+	var result []string
+	for _, term := range allTerms {
+		if !uniqueTerms[term] {
+			uniqueTerms[term] = true
+			result = append(result, term)
+		}
+	}
+
+	enhanced := strings.Join(result, " ")
+	if enhanced != originalQuery {
+		log.Printf("🔄 [ai_enhance] Fallback partial match: '%s' -> '%s'", originalQuery, enhanced)
+		return enhanced
+	}
+
+	// If no enhancement found, return original
+	log.Printf("🔄 [ai_enhance] Fallback: no enhancement for '%s'", originalQuery)
+	return originalQuery
 }

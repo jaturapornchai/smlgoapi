@@ -28,6 +28,7 @@ type SearchParameters struct {
 	Query  string `json:"query" binding:"required"` // actual search text (not base64)
 	Limit  int    `json:"limit,omitempty"`          // number of results
 	Offset int    `json:"offset,omitempty"`         // pagination offset
+	AI     int    `json:"ai,omitempty"`             // AI mode: 0=no AI, 1=use AI to enhance query
 }
 
 // SearchRequest represents a vector search request (for backward compatibility)

@@ -27,34 +27,22 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 		MaxAge:           12 * time.Hour,
 	}))
 
-	// Health check endpoint
-	router.GET("/health", apiHandler.HealthCheck)
+	// API documentation endpoint (root)
+	router.GET("/", RootHandler)
 
-	// Legacy endpoints (maintain backwards compatibility)
-	router.POST("/search", apiHandler.SearchProducts)
-	router.GET("/imgproxy", apiHandler.ImageProxy)
-	router.HEAD("/imgproxy", apiHandler.ImageProxyHead)
-	router.POST("/command", apiHandler.CommandEndpoint)
-	router.POST("/select", apiHandler.SelectEndpoint)
-	router.POST("/pgcommand", apiHandler.PgCommandEndpoint)
-	router.POST("/pgselect", apiHandler.PgSelectEndpoint)
-	// API v1 routes
+	// All API endpoints under /v1
 	v1 := router.Group("/v1")
 	{
-		// Health check endpoint for v1
+		// Health check endpoint
 		v1.GET("/health", apiHandler.HealthCheck)
 
-		// API documentation endpoint for AI/tools
+		// API documentation endpoints
 		v1.GET("/docs", DocsHandler)
+		v1.GET("/guide", apiHandler.GuideEndpoint)
 
-		// Thai Administrative Data endpoints
-		v1.POST("/provinces", apiHandler.GetProvinces)
-		v1.POST("/amphures", apiHandler.GetAmphures)
-		v1.POST("/tambons", apiHandler.GetTambons)
-		v1.POST("/findbyzipcode", apiHandler.FindByZipCode)
 		// Search endpoints
-		v1.GET("/search", apiHandler.SearchProducts)  // GET method for URL parameters
-		v1.POST("/search", apiHandler.SearchProducts) // POST method for JSON body
+		v1.GET("/search", apiHandler.SearchProducts)
+		v1.POST("/search", apiHandler.SearchProducts)
 
 		// Database endpoints
 		v1.GET("/tables", apiHandler.GetTables)
@@ -66,26 +54,13 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 		// Image proxy endpoints
 		v1.GET("/imgproxy", apiHandler.ImageProxy)
 		v1.HEAD("/imgproxy", apiHandler.ImageProxyHead)
-	}
 
-	// Legacy API routes (maintain backwards compatibility)
-	api := router.Group("/api")
-	{
-		// Database routes
-		api.GET("/tables", apiHandler.GetTables)
+		// Thai Administrative Data endpoints
+		v1.POST("/provinces", apiHandler.GetProvinces)
+		v1.POST("/amphures", apiHandler.GetAmphures)
+		v1.POST("/tambons", apiHandler.GetTambons)
+		v1.POST("/findbyzipcode", apiHandler.FindByZipCode)
 	}
-
-	// Legacy /get/ routes (maintain backwards compatibility)
-	get := router.Group("/get")
-	{
-		get.POST("/provinces", apiHandler.GetProvinces)
-		get.POST("/amphures", apiHandler.GetAmphures)
-		get.POST("/tambons", apiHandler.GetTambons)
-		get.POST("/findbyzipcode", apiHandler.FindByZipCode)
-	}
-
-	// API documentation endpoint
-	router.GET("/", RootHandler)
 
 	return router
 }
