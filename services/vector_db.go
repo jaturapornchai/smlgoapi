@@ -52,6 +52,7 @@ type SearchResult struct {
 	MultiPacking     int     `json:"multi_packing"`
 	MultiPackingName string  `json:"multi_packing_name"`
 	Barcodes         string  `json:"barcodes"`
+	Barcode          string  `json:"barcode"` // Individual barcode from Weaviate
 	QtyAvailable     float64 `json:"qty_available"`
 }
 

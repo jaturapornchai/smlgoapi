@@ -714,3 +714,246 @@ func (s *PostgreSQLService) SearchProducts(ctx context.Context, query string, li
 	log.Printf("✅ Search completed: found %d results, total count: %d", len(results), totalCount)
 	return results, totalCount, nil
 }
+
+// SearchProductsByBarcodes performs search on the ic_inventory table using specific barcodes
+func (s *PostgreSQLService) SearchProductsByBarcodes(ctx context.Context, barcodes []string, limit, offset int) ([]map[string]interface{}, int, error) {
+	return s.SearchProductsByBarcodesWithRelevance(ctx, barcodes, nil, limit, offset)
+}
+
+// SearchProductsByBarcodesWithRelevance performs search on the ic_inventory table using specific barcodes with relevance scores
+func (s *PostgreSQLService) SearchProductsByBarcodesWithRelevance(ctx context.Context, barcodes []string, relevanceMap map[string]float64, limit, offset int) ([]map[string]interface{}, int, error) {
+	return s.SearchProductsByBarcodesWithRelevanceAndBarcodeMap(ctx, barcodes, relevanceMap, nil, limit, offset)
+}
+
+// SearchProductsByBarcodesWithRelevanceAndBarcodeMap performs search with barcode mapping
+func (s *PostgreSQLService) SearchProductsByBarcodesWithRelevanceAndBarcodeMap(ctx context.Context, barcodes []string, relevanceMap map[string]float64, barcodeMap map[string]string, limit, offset int) ([]map[string]interface{}, int, error) {
+	if len(barcodes) == 0 {
+		return []map[string]interface{}{}, 0, nil
+	}
+
+	// First check if the ic_inventory table exists
+	checkTableQuery := `
+		SELECT COUNT(*) 
+		FROM information_schema.tables 
+		WHERE table_schema = 'public' 
+		AND table_name = 'ic_inventory'`
+
+	var tableExists int
+	err := s.db.QueryRowContext(ctx, checkTableQuery).Scan(&tableExists)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to check table existence: %w", err)
+	}
+
+	if tableExists == 0 {
+		return nil, 0, fmt.Errorf("table 'ic_inventory' not found in database - please create the table or contact system administrator")
+	}
+
+	// Build IN clause for barcode filtering
+	placeholders := make([]string, len(barcodes))
+	params := make([]interface{}, len(barcodes))
+	for i, barcode := range barcodes {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		params[i] = barcode
+	}
+
+	whereClause := fmt.Sprintf("CAST(code AS TEXT) IN (%s)", strings.Join(placeholders, ","))
+
+	// Get count of matching records
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*) as total_count
+		FROM ic_inventory 
+		WHERE %s`, whereClause)
+
+	countRows, err := s.db.QueryContext(ctx, countQuery, params...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to execute count query: %w", err)
+	}
+	defer countRows.Close()
+
+	var totalCount int
+	if countRows.Next() {
+		if err := countRows.Scan(&totalCount); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan count result: %w", err)
+		}
+	}
+
+	// Build search query with barcode filtering and ordering by relevance (if available) then by name
+	var orderClause string
+	if relevanceMap != nil && len(relevanceMap) > 0 {
+		// Create CASE statement for relevance-based ordering
+		var caseClauses []string
+		for code, relevance := range relevanceMap {
+			caseClauses = append(caseClauses, fmt.Sprintf("WHEN CAST(code AS TEXT) = '%s' THEN %f",
+				strings.Replace(code, "'", "''", -1), relevance)) // Escape single quotes
+		}
+		orderClause = fmt.Sprintf(`ORDER BY 
+			CASE %s ELSE 0 END DESC, 
+			name ASC`, strings.Join(caseClauses, " "))
+	} else {
+		orderClause = "ORDER BY name ASC"
+	}
+
+	searchQuery := fmt.Sprintf(`
+		SELECT COALESCE(CAST(code AS TEXT), 'N/A') as code, 
+		       COALESCE(CAST(name AS TEXT), 'N/A') as name,
+		       COALESCE(CAST(unit_standard_code AS TEXT), 'N/A') as unit_standard_code,
+		       COALESCE(item_type, 0) as item_type,
+		       COALESCE(row_order_ref, 0) as row_order_ref,
+		       5 as search_priority
+		FROM ic_inventory 
+		WHERE %s
+		%s
+		LIMIT $%d OFFSET $%d`,
+		whereClause, orderClause, len(params)+1, len(params)+2)
+
+	// Prepare parameters for search query
+	searchParams := make([]interface{}, 0)
+	searchParams = append(searchParams, params...) // barcode parameters
+	searchParams = append(searchParams, limit)     // limit
+	searchParams = append(searchParams, offset)    // offset
+
+	// Log the search summary instead of full SQL
+	log.Printf("🔍 [PostgreSQL] Searching by %s codes: %d items, limit=%d, offset=%d",
+		func() string {
+			if strings.Contains(searchQuery, "ORDER BY") && strings.Contains(searchQuery, "CASE") {
+				return "IC/Barcode (with relevance)"
+			}
+			return "IC/Barcode"
+		}(), len(params), limit, offset)
+
+	rows, err := s.db.QueryContext(ctx, searchQuery, searchParams...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to execute barcode search query: %w", err)
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	var icCodes []string // Collect ic_codes for filtered price/balance loading
+
+	for rows.Next() {
+		var code, name, unitStandardCode string
+		var itemType, rowOrderRef, searchPriority int
+
+		err := rows.Scan(&code, &name, &unitStandardCode, &itemType, &rowOrderRef, &searchPriority)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan barcode search result: %w", err)
+		}
+
+		icCodes = append(icCodes, code) // Collect ic_code for later price/balance lookup
+
+		// Default values for pricing and inventory fields
+		var salePrice, discountPrice, discountPercent, finalPrice, soldQty, qtyAvailable float64 = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+		premiumWord := "N/A"
+		multiPacking := 0
+		multiPackingName := "N/A"
+		barcodesField := code // Use the code as default barcodes field
+
+		// Get the actual barcode from the mapping if available
+		actualBarcode := code // Default to code
+		if barcodeMap != nil {
+			if mappedBarcode, exists := barcodeMap[code]; exists {
+				actualBarcode = mappedBarcode
+			}
+		}
+
+		// Get relevance score from map if available
+		var relevanceScore float64 = float64(searchPriority) // Default to search priority
+		if relevanceMap != nil {
+			if score, exists := relevanceMap[code]; exists {
+				relevanceScore = score
+			}
+		}
+
+		result := map[string]interface{}{
+			"id":                 code, // Use code as id since there's no separate id field
+			"code":               code,
+			"name":               name,
+			"unit_standard_code": unitStandardCode,
+			"item_type":          itemType,
+			"row_order_ref":      rowOrderRef,
+			"search_priority":    searchPriority,
+			"similarity_score":   relevanceScore, // Use relevance score from Weaviate
+
+			// Pricing and inventory fields (will be updated below)
+			"sale_price":         salePrice,
+			"premium_word":       premiumWord,
+			"discount_price":     discountPrice,
+			"discount_percent":   discountPercent,
+			"final_price":        finalPrice,
+			"sold_qty":           soldQty,
+			"multi_packing":      multiPacking,
+			"multi_packing_name": multiPackingName,
+			"barcodes":           barcodesField,
+			"barcode":            actualBarcode, // Add the actual barcode from Weaviate
+			"qty_available":      qtyAvailable,
+
+			// Legacy fields for backward compatibility
+			"description":   "",        // Not available in ic_inventory
+			"price":         salePrice, // Map to sale_price for compatibility
+			"balance_qty":   0.0,       // Not available in ic_inventory
+			"unit":          unitStandardCode,
+			"supplier_code": "N/A", // Not available in ic_inventory
+			"img_url":       "",    // Not available in ic_inventory
+		}
+
+		results = append(results, result)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("rows iteration error: %w", err)
+	}
+
+	// Now load price and balance data only for the found products
+	if len(icCodes) > 0 {
+		log.Printf("🏷️ [PostgreSQL] Loading price data for %d products...", len(icCodes))
+		priceMap, err := s.LoadPriceFormulaFiltered(ctx, icCodes)
+		if err != nil {
+			log.Printf("⚠️ [PostgreSQL] Failed to load price formula: %v - using default prices", err)
+			priceMap = make(map[string]*PriceInfo)
+		} else {
+			log.Printf("✅ [PostgreSQL] Loaded price data for %d products", len(priceMap))
+		}
+
+		log.Printf("📦 [PostgreSQL] Loading balance data for %d products...", len(icCodes))
+		balanceMap, err := s.LoadBalanceDataFiltered(ctx, icCodes)
+		if err != nil {
+			log.Printf("⚠️ [PostgreSQL] Failed to load balance data: %v - using default balance", err)
+			balanceMap = make(map[string]*BalanceInfo)
+		} else {
+			log.Printf("✅ [PostgreSQL] Loaded balance data for %d products", len(balanceMap))
+		}
+
+		// Update results with price and balance data
+		priceFoundCount := 0
+		balanceFoundCount := 0
+		for i, result := range results {
+			code := result["code"].(string)
+
+			// Look up real price data
+			if priceInfo, exists := priceMap[code]; exists {
+				salePrice := priceInfo.Price0     // Use price_0 as sale_price
+				finalPrice := priceInfo.Price0    // Use price_0 as final_price too
+				discountPrice := priceInfo.Price1 // Use price_1 as discount_price if available
+
+				results[i]["sale_price"] = salePrice
+				results[i]["final_price"] = finalPrice
+				results[i]["discount_price"] = discountPrice
+				results[i]["price"] = salePrice // Update legacy field too
+				priceFoundCount++
+			}
+
+			// Look up real balance data
+			if balanceInfo, exists := balanceMap[code]; exists {
+				qtyAvailable := balanceInfo.TotalQty // Use sum of balance_qty as qty_available
+				results[i]["qty_available"] = qtyAvailable
+				balanceFoundCount++
+			}
+		}
+
+		log.Printf("� [PostgreSQL] Price data: %d/%d products have pricing", priceFoundCount, len(results))
+		log.Printf("📦 [PostgreSQL] Balance data: %d/%d products have stock info", balanceFoundCount, len(results))
+	}
+
+	log.Printf("✅ [PostgreSQL] Search completed: found %d results, total count: %d", len(results), totalCount)
+	return results, totalCount, nil
+}

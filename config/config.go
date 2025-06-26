@@ -3,7 +3,6 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -32,6 +31,10 @@ type Config struct {
 		Database string `json:"database"`
 		SSLMode  string `json:"sslmode"`
 	} `json:"postgresql"`
+	Weaviate struct {
+		URL    string `json:"url"`
+		Scheme string `json:"scheme"`
+	} `json:"weaviate"`
 }
 
 // JSONConfig represents the structure of smlgoapi.json
@@ -65,6 +68,10 @@ type JSONConfig struct {
 		Database string `json:"database"`
 		Secure   bool   `json:"secure"`
 	} `json:"postgres"`
+	Weaviate struct {
+		URL    string `json:"url"`
+		Scheme string `json:"scheme"`
+	} `json:"weaviate"`
 }
 
 func LoadConfig() *Config {
@@ -101,6 +108,14 @@ func LoadConfig() *Config {
 				config.PostgreSQL.SSLMode = "disable"
 			}
 		}
+
+		// Weaviate configuration
+		config.Weaviate.URL = jsonConfig.Weaviate.URL
+		config.Weaviate.Scheme = jsonConfig.Weaviate.Scheme
+		if config.Weaviate.Scheme == "" {
+			config.Weaviate.Scheme = "http" // Default scheme
+		}
+
 		return config
 	}
 
@@ -130,6 +145,10 @@ func LoadConfig() *Config {
 	config.PostgreSQL.Database = getEnv("POSTGRESQL_DATABASE", "postgres")
 	config.PostgreSQL.SSLMode = getEnv("POSTGRESQL_SSLMODE", "disable")
 
+	// Weaviate configuration
+	config.Weaviate.URL = getEnv("WEAVIATE_URL", "goapi.dev.dedepos.com:18008")
+	config.Weaviate.Scheme = getEnv("WEAVIATE_SCHEME", "http")
+
 	return config
 }
 
@@ -143,7 +162,7 @@ func loadJSONConfig() *JSONConfig {
 	}
 
 	for _, configPath := range possiblePaths {
-		data, err := ioutil.ReadFile(configPath)
+		data, err := os.ReadFile(configPath)
 		if err != nil {
 			continue // Try next path
 		}
@@ -186,6 +205,14 @@ func (c *Config) GetPostgreSQLDSN() string {
 
 func (c *Config) GetServerAddress() string {
 	return fmt.Sprintf("%s:%s", c.Server.Host, c.Server.Port)
+}
+
+func (c *Config) GetWeaviateURL() string {
+	return c.Weaviate.URL
+}
+
+func (c *Config) GetWeaviateScheme() string {
+	return c.Weaviate.Scheme
 }
 
 func getEnv(key, defaultValue string) string {
