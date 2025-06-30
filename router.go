@@ -41,8 +41,6 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 		v1.GET("/guide", apiHandler.GuideEndpoint)
 
 		// Search endpoints
-		v1.GET("/search", apiHandler.SearchProducts)
-		v1.POST("/search", apiHandler.SearchProducts)
 		v1.GET("/search-by-vector", apiHandler.SearchProductsByVector)
 		v1.POST("/search-by-vector", apiHandler.SearchProductsByVector)
 
@@ -52,10 +50,6 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 		v1.POST("/select", apiHandler.SelectEndpoint)
 		v1.POST("/pgcommand", apiHandler.PgCommandEndpoint)
 		v1.POST("/pgselect", apiHandler.PgSelectEndpoint)
-
-		// Image proxy endpoints
-		v1.GET("/imgproxy", apiHandler.ImageProxy)
-		v1.HEAD("/imgproxy", apiHandler.ImageProxyHead)
 
 		// Thai Administrative Data endpoints
 		v1.POST("/provinces", apiHandler.GetProvinces)

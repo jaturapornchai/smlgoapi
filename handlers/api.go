@@ -47,7 +47,6 @@ type APIHandler struct {
 	clickHouseService *services.ClickHouseService
 	postgreSQLService *services.PostgreSQLService
 	vectorDB          *services.TFIDFVectorDatabase
-	imageProxyService *services.ImageProxy
 	thaiAdminService  *services.ThaiAdminService
 	weaviateService   *services.WeaviateService
 }
@@ -57,7 +56,6 @@ func NewAPIHandler(clickHouseService *services.ClickHouseService, postgreSQLServ
 	if clickHouseService != nil {
 		vectorDB = services.NewTFIDFVectorDatabase(clickHouseService)
 	}
-	imageProxyService := services.NewImageProxy()
 	thaiAdminService := services.NewThaiAdminService()
 
 	// Initialize Weaviate service with config
@@ -75,7 +73,6 @@ func NewAPIHandler(clickHouseService *services.ClickHouseService, postgreSQLServ
 		clickHouseService: clickHouseService,
 		postgreSQLService: postgreSQLService,
 		vectorDB:          vectorDB,
-		imageProxyService: imageProxyService,
 		thaiAdminService:  thaiAdminService,
 		weaviateService:   weaviateService,
 	}
@@ -156,222 +153,6 @@ func (h *APIHandler) GetTables(c *gin.Context) {
 		Data:    tables,
 		Message: "Tables retrieved successfully",
 	})
-}
-
-// SearchProducts godoc
-// @Summary Search products using vector similarity with JSON body or URL parameters
-// @Description Search for products using TF-IDF vector similarity (supports both JSON body and URL parameters for all languages). AI parameter: 0=no AI enhancement, 1=use AI to enhance query
-// @Tags search
-// @Accept json
-// @Produce json
-// @Param search body models.SearchParameters true "Search parameters (for POST requests)"
-// @Param q query string false "Search query (for GET requests)"
-// @Param limit query integer false "Maximum number of results (for GET requests)"
-// @Param offset query integer false "Offset for pagination (for GET requests)"
-// @Param ai query integer false "AI mode: 0=no AI enhancement, 1=use AI to enhance query (for GET requests)"
-// @Success 200 {object} models.APIResponse
-// @Router /search [post]
-// @Router /search [get]
-func (h *APIHandler) SearchProducts(c *gin.Context) {
-	startTime := time.Now()
-
-	var params models.SearchParameters
-
-	// Check if this is a GET request with query parameters
-	if c.Request.Method == "GET" {
-		// Parse URL query parameters
-		params.Query = c.Query("q")
-		if limit := c.Query("limit"); limit != "" {
-			if l, err := strconv.Atoi(limit); err == nil {
-				params.Limit = l
-			}
-		}
-		if offset := c.Query("offset"); offset != "" {
-			if o, err := strconv.Atoi(offset); err == nil {
-				params.Offset = o
-			}
-		}
-		if ai := c.Query("ai"); ai != "" {
-			if a, err := strconv.Atoi(ai); err == nil {
-				params.AI = a
-			}
-		}
-	} else {
-		// Parse JSON body for POST requests
-		if err := c.ShouldBindJSON(&params); err != nil {
-			log.Printf("❌ [decode] JSON bind error: %v", err)
-			c.JSON(http.StatusBadRequest, models.APIResponse{
-				Success: false,
-				Error:   "Invalid JSON body: " + err.Error(),
-			})
-			return
-		}
-	}
-
-	log.Printf("🔍 [decode] Parsed parameters: query='%s', limit=%d, offset=%d, ai=%d",
-		params.Query, params.Limit, params.Offset, params.AI)
-
-	// Validate query
-	if params.Query == "" {
-		c.JSON(http.StatusBadRequest, models.APIResponse{
-			Success: false,
-			Error:   "Query field is required (use 'q' parameter for GET requests or 'query' field in JSON body for POST requests)",
-		})
-		return
-	}
-
-	query := params.Query
-
-	// AI Enhancement Processing
-	if params.AI == 1 {
-		log.Printf("🤖 [ai] AI mode enabled, enhancing query: '%s'", query)
-		enhancedQuery := h.enhanceQueryWithAI(query)
-		if enhancedQuery != query {
-			log.Printf("🤖 [ai] Query enhanced from '%s' to '%s'", query, enhancedQuery)
-			query = enhancedQuery
-		} else {
-			log.Printf("🤖 [ai] Query unchanged after AI processing")
-		}
-	} else {
-		log.Printf("💭 [ai] AI mode disabled (ai=0), using original query")
-	}
-
-	// Set default values
-	limit := params.Limit
-	if limit <= 0 {
-		limit = 10
-	}
-	if limit > 100 {
-		limit = 100 // Max limit
-	}
-
-	offset := params.Offset
-	if offset < 0 {
-		offset = 0
-	} // Simple logging
-	fmt.Printf("\n🔍 Search: '%s' (limit: %d, ai: %d)\n", query, limit, params.AI)
-	ctx := c.Request.Context()
-
-	// Perform PostgreSQL search instead of vector search
-	searchResults, totalCount, err := h.postgreSQLService.SearchProducts(ctx, query, limit, offset)
-	if err != nil {
-		duration := time.Since(startTime).Seconds() * 1000
-		fmt.Printf("❌ Error: %v (%.1fms)\n", err, duration)
-
-		c.JSON(http.StatusInternalServerError, models.APIResponse{
-			Success: false,
-			Error:   fmt.Sprintf("Search failed: %s", err.Error()),
-		})
-		return
-	}
-
-	// Convert PostgreSQL results to the expected format
-	var convertedResults []services.SearchResult
-	for _, result := range searchResults {
-		searchResult := services.SearchResult{
-			ID:              getStringValue(result, "id"),
-			Name:            getStringValue(result, "name"),
-			Code:            getStringValue(result, "code"),
-			Price:           getFloat64Value(result, "price"),
-			BalanceQty:      getFloat64Value(result, "balance_qty"),
-			Unit:            getStringValue(result, "unit"),
-			SupplierCode:    getStringValue(result, "supplier_code"),
-			ImgURL:          getStringValue(result, "img_url"),
-			SimilarityScore: getFloat64Value(result, "similarity_score"),
-			SearchPriority:  int(getFloat64Value(result, "search_priority")),
-
-			// New fields
-			SalePrice:        getFloat64Value(result, "sale_price"),
-			PremiumWord:      getStringValue(result, "premium_word"),
-			DiscountPrice:    getFloat64Value(result, "discount_price"),
-			DiscountPercent:  getFloat64Value(result, "discount_percent"),
-			FinalPrice:       getFloat64Value(result, "final_price"),
-			SoldQty:          getFloat64Value(result, "sold_qty"),
-			MultiPacking:     int(getFloat64Value(result, "multi_packing")),
-			MultiPackingName: getStringValue(result, "multi_packing_name"),
-			Barcodes:         getStringValue(result, "barcodes"),
-			QtyAvailable:     getFloat64Value(result, "qty_available"),
-		}
-		convertedResults = append(convertedResults, searchResult)
-	}
-
-	// Create response in the expected format
-	results := &services.VectorSearchResponse{
-		Data:       convertedResults,
-		TotalCount: totalCount,
-		Query:      query,
-		Duration:   time.Since(startTime).Seconds() * 1000,
-	}
-	duration := time.Since(startTime).Seconds() * 1000
-
-	// Enhanced search results logging
-	fmt.Printf("\n� [search_products] SEARCH RESULTS SUMMARY:\n")
-	fmt.Printf("   [search_products] Query: '%s'\n", query)
-	fmt.Printf("   [search_products] Total Found: %d records\n", results.TotalCount)
-	fmt.Printf("   [search_products] Returned: %d results\n", len(results.Data))
-	fmt.Printf("   [search_products] Page: %d (offset: %d, limit: %d)\n", (offset/limit)+1, offset, limit)
-	fmt.Printf("   [search_products] Processing Duration: %.1fms\n", duration)
-	if len(results.Data) > 0 {
-		fmt.Printf("\n📋 [search_products] TOP RESULTS DETAILS:\n")
-		maxShow := 10 // Show more results in log
-		if len(results.Data) < maxShow {
-			maxShow = len(results.Data)
-		}
-		for i := 0; i < maxShow; i++ {
-			result := results.Data[i]
-
-			// Extract metadata directly from fields
-			itemCode := result.Code
-			if itemCode == "" {
-				itemCode = "N/A"
-			}
-
-			qty := fmt.Sprintf("%.2f", result.BalanceQty)
-
-			category := "N/A" // Category not available in current struct
-
-			fmt.Printf("     [search_products] %d. [%s] %s\n", i+1, itemCode, result.Name)
-			fmt.Printf("         └─ Score: %.4f | Qty: %s | Category: %s\n",
-				result.SimilarityScore, qty, category)
-		}
-
-		if len(results.Data) > maxShow {
-			fmt.Printf("     [search_products] ... and %d more results\n", len(results.Data)-maxShow)
-		}
-	} else {
-		fmt.Printf("   [search_products] ❌ No results found for query: '%s'\n", query)
-	}
-
-	fmt.Printf("\n✅ [search_products] SEARCH COMPLETED (%.1fms)\n", duration)
-	c.JSON(http.StatusOK, models.APIResponse{
-		Success: true,
-		Data:    results,
-		Message: "Search completed successfully",
-	})
-}
-
-// ImageProxy godoc
-// @Summary Proxy images with caching
-// @Description Proxy and cache images from external URLs with CORS support
-// @Tags proxy
-// @Produce json,image/jpeg,image/png,image/gif,image/webp
-// @Param url query string true "Image URL to proxy"
-// @Success 200 {file} binary "Image file"
-// @Router /imgproxy [get]
-func (h *APIHandler) ImageProxy(c *gin.Context) {
-	h.imageProxyService.ProxyHandler(c)
-}
-
-// ImageProxyHead godoc
-// @Summary HEAD request for image proxy
-// @Description Check if image exists without downloading content
-// @Tags proxy
-// @Param url query string true "Image URL to check"
-// @Success 200 "Image exists"
-// @Success 404 "Image not found"
-// @Router /imgproxy [head]
-func (h *APIHandler) ImageProxyHead(c *gin.Context) {
-	h.imageProxyService.HeadHandler(c)
 }
 
 // CommandEndpoint godoc
@@ -712,187 +493,7 @@ func (h *APIHandler) GuideEndpoint(c *gin.Context) {
 				},
 			},
 
-			"product_search": map[string]interface{}{
-				"methods":      []string{"GET", "POST"},
-				"urls":         []string{"/v1/search", "/search"},
-				"purpose":      "🚀 AI-powered auto parts search with multi-language support and intelligent query enhancement",
-				"content_type": "application/json",
-
-				"request_formats": map[string]interface{}{
-					"GET": map[string]interface{}{
-						"url_parameters": map[string]interface{}{
-							"q":      "string (required) - Search query (supports Thai and English)",
-							"limit":  "number (optional) - Max results (default: 10, max: 100)",
-							"offset": "number (optional) - Pagination offset (default: 0)",
-							"ai":     "number (optional) - AI enhancement mode (0=off, 1=on, default: 0)",
-						},
-						"example_url": "/v1/search?q=โตโยต้า+เบรค&limit=5&ai=1",
-					},
-					"POST": map[string]interface{}{
-						"body_parameters": map[string]interface{}{
-							"query":  "string (required) - Search query",
-							"limit":  "number (optional) - Max results (default: 10, max: 100)",
-							"offset": "number (optional) - Pagination offset (default: 0)",
-							"ai":     "number (optional) - AI enhancement mode (0=off, 1=on, default: 0)",
-						},
-						"example_body": map[string]interface{}{
-							"query":  "toyota brake",
-							"limit":  5,
-							"offset": 0,
-							"ai":     1,
-						},
-					},
-				},
-
-				"ai_enhancement": map[string]interface{}{
-					"description": "🤖 AI-powered query enhancement using DeepSeek API",
-					"features": []string{
-						"Thai ↔ English translation (โตโยต้า ↔ toyota)",
-						"Typo correction (break → brake)",
-						"Term expansion (brake → brake เบรค brakes)",
-						"Automotive terminology optimization",
-						"Multi-keyword generation for comprehensive search",
-					},
-					"examples": map[string]interface{}{
-						"thai_input":    "เบรค → เบรค brake brakes ระบบเบรค brake pad",
-						"typo_fix":      "break → brake เบรค brakes",
-						"brand_enhance": "toyoda → toyota โตโยต้า TOYOTA",
-					},
-					"fallback": "Local enhancement rules when AI API is unavailable",
-				},
-
-				"search_algorithm": map[string]interface{}{
-					"scope":         "Searches only in 'code' and 'name' fields for maximum accuracy",
-					"logic":         "Full-text OR search - each word creates OR conditions",
-					"priority":      "Code exact match > Code partial > Name partial",
-					"unicode":       "Full Unicode support for Thai text using ILIKE",
-					"deduplication": "Automatic duplicate removal",
-					"ordering":      "Priority score DESC → Name length ASC → Name alphabetical",
-				},
-
-				"response_format": map[string]interface{}{
-					"success": "boolean - Search execution status",
-					"message": "string - Human-readable result message",
-					"data": map[string]interface{}{
-						"data":        "array - Product results",
-						"total_count": "number - Total matching products found",
-						"query":       "string - Final query used (may be AI-enhanced)",
-						"duration":    "number - Search execution time in milliseconds",
-					},
-					"product_fields": map[string]interface{}{
-						"id":               "string - Product identifier (same as code)",
-						"code":             "string - Product code/SKU",
-						"name":             "string - Product name",
-						"similarity_score": "number - Search relevance score",
-						"balance_qty":      "number - Available quantity",
-						"price":            "number - Product price",
-						"supplier_code":    "string - Supplier identifier",
-						"search_priority":  "number - Internal priority score",
-					},
-				},
-
-				"response_examples": map[string]interface{}{
-					"successful_search": map[string]interface{}{
-						"success": true,
-						"message": "Search completed successfully",
-						"data": map[string]interface{}{
-							"data": []map[string]interface{}{
-								{
-									"id":               "A-88711-0KC50",
-									"name":             "ท่อแอร์ TOYOTA",
-									"code":             "A-88711-0KC50",
-									"similarity_score": 1.0,
-									"balance_qty":      0.0,
-									"price":            0.0,
-									"supplier_code":    "N/A",
-									"search_priority":  5,
-								},
-							},
-							"total_count": 2182,
-							"query":       "toyota brake (AI enhanced)",
-							"duration":    525.3,
-						},
-					},
-					"no_results": map[string]interface{}{
-						"success": true,
-						"message": "No products found matching your search criteria",
-						"data": map[string]interface{}{
-							"data":        []interface{}{},
-							"total_count": 0,
-							"query":       "nonexistent part",
-							"duration":    45.2,
-						},
-					},
-					"error_response": map[string]interface{}{
-						"success": false,
-						"error":   "Search failed: table 'ic_inventory' not found in database",
-					},
-				},
-
-				"practical_examples": map[string]interface{}{
-					"basic_search": map[string]interface{}{
-						"description": "Simple search without AI",
-						"curl":        `curl -X GET "http://localhost:8008/v1/search?q=toyota&limit=5"`,
-						"javascript":  `fetch('/v1/search?q=toyota&limit=5').then(r => r.json())`,
-					},
-					"ai_enhanced_search": map[string]interface{}{
-						"description": "AI-powered search with translation",
-						"curl":        `curl -X GET "http://localhost:8008/v1/search?q=เบรค&ai=1&limit=10"`,
-						"javascript":  `fetch('/v1/search?q=เบรค&ai=1&limit=10').then(r => r.json())`,
-					},
-					"post_search": map[string]interface{}{
-						"description": "POST request with JSON body",
-						"curl":        `curl -X POST "http://localhost:8008/v1/search" -H "Content-Type: application/json" -d '{"query": "toyota compressor", "ai": 1, "limit": 5}'`,
-						"javascript":  `fetch('/v1/search', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({query: 'toyota compressor', ai: 1, limit: 5})})`,
-					},
-					"pagination": map[string]interface{}{
-						"description": "Paginated search results",
-						"curl":        `curl -X GET "http://localhost:8008/v1/search?q=brake&limit=20&offset=40"`,
-						"javascript":  `fetch('/v1/search?q=brake&limit=20&offset=40').then(r => r.json())`,
-					},
-				},
-
-				"use_cases": []string{
-					"🏪 E-commerce auto parts search",
-					"📦 Inventory management systems",
-					"🔧 Service workshop part lookup",
-					"🤖 AI chatbot integration for customer service",
-					"📱 Mobile app product discovery",
-					"🌐 Multi-language marketplace platforms",
-					"📊 Analytics and business intelligence",
-					"🔍 Advanced filtering and recommendation engines",
-				},
-
-				"performance_tips": []string{
-					"Use specific search terms for faster results",
-					"Enable AI (ai=1) for cross-language searches",
-					"Use pagination for large result sets",
-					"Cache common search results on frontend",
-					"Monitor duration field for performance optimization",
-				},
-			},
-
-			"image_proxy": map[string]interface{}{
-				"method":  "GET",
-				"url":     "/imgproxy",
-				"purpose": "Proxy and cache external images",
-				"parameters": map[string]interface{}{
-					"url": "string (required) - External image URL to proxy",
-				},
-				"request_example": "/imgproxy?url=https://example.com/image.jpg",
-				"response":        "Image binary data with appropriate headers",
-				"features": []string{
-					"Image caching for performance",
-					"CORS headers for frontend use",
-					"Support for various image formats",
-					"HEAD request support for metadata",
-				},
-				"use_cases": []string{
-					"Frontend image display",
-					"Bypass CORS restrictions",
-					"Image caching and optimization",
-				},
-			}, "database_tables": map[string]interface{}{
+			"database_tables": map[string]interface{}{
 				"method":     "GET",
 				"url":        "/api/tables",
 				"purpose":    "List all available database tables",
@@ -1038,11 +639,10 @@ func (h *APIHandler) GuideEndpoint(c *gin.Context) {
 
 		"integration_examples": map[string]interface{}{
 			"curl_examples": map[string]interface{}{
-				"health_check":    "curl http://localhost:8008/health",
-				"create_table":    "curl -X POST http://localhost:8008/command -H 'Content-Type: application/json' -d '{\"query\": \"CREATE TABLE test (id UInt32, name String) ENGINE = MergeTree() ORDER BY id\"}'",
-				"insert_data":     "curl -X POST http://localhost:8008/command -H 'Content-Type: application/json' -d '{\"query\": \"INSERT INTO test VALUES (1, 'hello')\"}'",
-				"select_data":     "curl -X POST http://localhost:8008/select -H 'Content-Type: application/json' -d '{\"query\": \"SELECT * FROM test\"}'",
-				"search_products": "curl -X POST http://localhost:8008/search -H 'Content-Type: application/json' -d '{\"query\": \"laptop\", \"limit\": 5}'",
+				"health_check": "curl http://localhost:8008/health",
+				"create_table": "curl -X POST http://localhost:8008/command -H 'Content-Type: application/json' -d '{\"query\": \"CREATE TABLE test (id UInt32, name String) ENGINE = MergeTree() ORDER BY id\"}'",
+				"insert_data":  "curl -X POST http://localhost:8008/command -H 'Content-Type: application/json' -d '{\"query\": \"INSERT INTO test VALUES (1, 'hello')\"}'",
+				"select_data":  "curl -X POST http://localhost:8008/select -H 'Content-Type: application/json' -d '{\"query\": \"SELECT * FROM test\"}'",
 			},
 			"javascript_fetch": map[string]interface{}{
 				"async_example": `
@@ -1302,6 +902,17 @@ func (h *APIHandler) SearchProductsByVector(c *gin.Context) {
 
 	query := params.Query
 
+	// AI Enhancement for Vector Search - ปรับปรุงคำค้นหาด้วย DeepSeek
+	enhancedQuery, err := h.enhanceQueryForVectorSearch(query)
+	if err != nil {
+		log.Printf("⚠️ [VECTOR-SEARCH] DeepSeek enhancement failed, using original query: %v", err)
+		enhancedQuery = query // ใช้คำค้นหาเดิม
+	}
+
+	// ใช้ enhanced query สำหรับการค้นหา
+	searchQuery := enhancedQuery
+	log.Printf("🤖 [VECTOR-SEARCH] Enhanced query: '%s' -> '%s'", query, searchQuery)
+
 	// Set default values
 	limit := params.Limit
 	if limit <= 0 {
@@ -1318,16 +929,68 @@ func (h *APIHandler) SearchProductsByVector(c *gin.Context) {
 
 	// Enhanced logging
 	fmt.Printf("\n🚀 [VECTOR-SEARCH] === STARTING SEARCH ===\n")
-	fmt.Printf("   📝 Query: '%s'\n", query)
+	fmt.Printf("   📝 Original Query: '%s'\n", query)
+	fmt.Printf("   🤖 Enhanced Query: '%s'\n", searchQuery)
 	fmt.Printf("   📊 Limit: %d, Offset: %d\n", limit, offset)
 	fmt.Printf("   =====================================\n")
 	ctx := c.Request.Context()
 
 	// Step 1: Search Weaviate vector database first to get IC codes and barcodes
 	if h.weaviateService == nil {
-		c.JSON(http.StatusServiceUnavailable, models.APIResponse{
-			Success: false,
-			Message: "Vector search service not available",
+		// Fallback to regular search when Weaviate is not available
+		log.Printf("⚠️ [VECTOR-SEARCH] Weaviate service not available, falling back to regular search")
+
+		// Use regular PostgreSQL search as fallback
+		searchResults, totalCount, err := h.postgreSQLService.SearchProducts(ctx, searchQuery, limit, offset)
+		if err != nil {
+			log.Printf("❌ [VECTOR-SEARCH] PostgreSQL fallback search failed: %v", err)
+			c.JSON(http.StatusInternalServerError, models.APIResponse{
+				Success: false,
+				Message: "Search failed: " + err.Error(),
+			})
+			return
+		}
+
+		// Convert PostgreSQL results to the expected format
+		var convertedResults []services.SearchResult
+		for _, result := range searchResults {
+			convertedResult := services.SearchResult{
+				ID:               getStringValue(result, "id"),
+				Code:             getStringValue(result, "code"),
+				Name:             getStringValue(result, "name"),
+				Price:            getFloat64Value(result, "price"),
+				Unit:             getStringValue(result, "unit"),
+				SupplierCode:     getStringValue(result, "supplier_code"),
+				ImgURL:           getStringValue(result, "img_url"),
+				SimilarityScore:  getFloat64Value(result, "similarity_score"),
+				SalePrice:        getFloat64Value(result, "sale_price"),
+				PremiumWord:      getStringValue(result, "premium_word"),
+				DiscountPrice:    getFloat64Value(result, "discount_price"),
+				DiscountPercent:  getFloat64Value(result, "discount_percent"),
+				FinalPrice:       getFloat64Value(result, "final_price"),
+				SoldQty:          getFloat64Value(result, "sold_qty"),
+				MultiPacking:     int(getFloat64Value(result, "multi_packing")),
+				MultiPackingName: getStringValue(result, "multi_packing_name"),
+				Barcodes:         getStringValue(result, "barcodes"),
+				QtyAvailable:     getFloat64Value(result, "qty_available"),
+				BalanceQty:       getFloat64Value(result, "balance_qty"),
+				SearchPriority:   int(getFloat64Value(result, "search_priority")),
+			}
+			convertedResults = append(convertedResults, convertedResult)
+		}
+
+		// Create response in the expected format
+		results := &services.VectorSearchResponse{
+			Data:       convertedResults,
+			TotalCount: totalCount,
+			Query:      searchQuery + " (fallback to regular search)",
+			Duration:   time.Since(startTime).Seconds() * 1000,
+		}
+
+		c.JSON(http.StatusOK, models.APIResponse{
+			Success: true,
+			Data:    results,
+			Message: "Search completed successfully using fallback method (Weaviate unavailable)",
 		})
 		return
 	}
@@ -1338,7 +1001,7 @@ func (h *APIHandler) SearchProductsByVector(c *gin.Context) {
 		vectorLimit = 300
 	}
 
-	vectorProducts, err := h.weaviateService.SearchProducts(ctx, query, vectorLimit)
+	vectorProducts, err := h.weaviateService.SearchProducts(ctx, searchQuery, vectorLimit)
 	if err != nil {
 		log.Printf("❌ [VECTOR-SEARCH] Weaviate vector search failed: %v", err)
 		c.JSON(http.StatusInternalServerError, models.APIResponse{
@@ -1478,14 +1141,15 @@ func (h *APIHandler) SearchProductsByVector(c *gin.Context) {
 	results := &services.VectorSearchResponse{
 		Data:       convertedResults,
 		TotalCount: totalCount,
-		Query:      query,
+		Query:      searchQuery,
 		Duration:   time.Since(startTime).Seconds() * 1000,
 	}
 	duration := time.Since(startTime).Seconds() * 1000
 
 	// Enhanced search results logging
 	fmt.Printf("\n🎯 [VECTOR-SEARCH] === SEARCH RESULTS SUMMARY ===\n")
-	fmt.Printf("   📝 Query: '%s'\n", query)
+	fmt.Printf("   📝 Original Query: '%s'\n", query)
+	fmt.Printf("   🤖 Enhanced Query: '%s'\n", searchQuery)
 	fmt.Printf("   🔗 Search Method: %s\n", searchMethod)
 	fmt.Printf("   🎲 Vector Database: %d products found\n", len(vectorProducts))
 	fmt.Printf("   📊 PostgreSQL Total: %d records\n", results.TotalCount)
@@ -1511,14 +1175,6 @@ func (h *APIHandler) SearchProductsByVector(c *gin.Context) {
 		Data:    results,
 		Message: "Vector search completed successfully",
 	})
-}
-
-// Helper function to get minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // Helper functions for type conversion from map[string]interface{}
@@ -1555,57 +1211,61 @@ func getFloat64Value(data map[string]interface{}, key string) float64 {
 	return 0.0
 }
 
-// enhanceQueryWithAI enhances the search query using DeepSeek AI API
-// This function applies AI-based query enhancement when ai=1 parameter is used
-func (h *APIHandler) enhanceQueryWithAI(originalQuery string) string {
-	log.Printf("🤖 [ai_enhance] Processing query with DeepSeek AI: '%s'", originalQuery)
+// enhanceQueryForVectorSearch enhances search query specifically for vector search
+// ปรับปรุงคำค้นหาสำหรับ vector search โดยเฉพาะ พร้อม fallback เมื่อ API ล้มเหลว
+func (h *APIHandler) enhanceQueryForVectorSearch(originalQuery string) (string, error) {
+	log.Printf("🤖 [vector-enhance] Processing query for vector search: '%s'", originalQuery)
 
-	// Call DeepSeek API
-	enhancedQuery, err := h.callDeepSeekAPI(originalQuery)
+	// ลอง DeepSeek API ก่อน แต่ถ้าล้มเหลวจะใช้ fallback ทันที
+	enhancedQuery, err := h.callDeepSeekAPIForVector(originalQuery)
 	if err != nil {
-		log.Printf("❌ [ai_enhance] DeepSeek API error: %v, using fallback", err)
-		return h.fallbackEnhancement(originalQuery)
+		log.Printf("⚠️ [vector-enhance] DeepSeek API failed (%v), using fallback enhancement", err)
+		return originalQuery, nil
 	}
 
-	if enhancedQuery != originalQuery {
-		log.Printf("🤖 [ai_enhance] DeepSeek enhanced: '%s' -> '%s'", originalQuery, enhancedQuery)
-		return enhancedQuery
+	// ลบคำซ้ำและทำความสะอาด
+	cleanedQuery := h.removeDuplicateWords(enhancedQuery)
+
+	if cleanedQuery != originalQuery {
+		log.Printf("🤖 [vector-enhance] DeepSeek enhanced & cleaned: '%s' -> '%s'", originalQuery, cleanedQuery)
+		return cleanedQuery, nil
 	}
 
-	log.Printf("🤖 [ai_enhance] DeepSeek returned same query: '%s'", originalQuery)
-	return originalQuery
+	log.Printf("🤖 [vector-enhance] DeepSeek returned same query, using fallback")
+
+	return originalQuery, nil
 }
 
-// callDeepSeekAPI calls the DeepSeek API for query enhancement
-func (h *APIHandler) callDeepSeekAPI(query string) (string, error) {
-	prompt := fmt.Sprintf(`You are a translation assistant for automotive parts database search. Your job is to help users find parts by providing both the original term and its translations, creating the most comprehensive search query possible.
+// callDeepSeekAPIForVector เรียก DeepSeek API สำหรับ vector search โดยเฉพาะ
+func (h *APIHandler) callDeepSeekAPIForVector(originalQuery string) (string, error) {
+	// สร้าง prompt ที่ครอบคลุมสำหรับ vector search
+	prompt := fmt.Sprintf(`
+ตัวอย่างคำพ้องเสียง ถ้าข้อความเป็นไทย ใช้คำพร้องเสียงเป็นภาษาอังกฤษ ถ้าเป็นภาษาอังกฤษ ใช้คำพ้องเสียงเป็นภาษาไทย:
+- toyota = โตโยต้า
+- honda = ฮอนด้า  
+- nissan = นิสสัน
+- mazda = มาสด้า
+- brake = เบรค
+- oil = น้ำมัน
+- light = ไฟ
+- wheel = ล้อ
+- tire = ยาง
+- battery = แบตเตอรี่
+- coil = คอยล์
+- shock = โช๊ค
+- filter = กรอง
+- engine = เครื่องยนต์
+ถ้าเป็นชื่อรุ่น ใช้คำพ้องเสียงเป็นภาษาอังกฤษ และภาษาไทย
 
-RULES:
-1. Always include BOTH the original query AND translations
-2. Support Thai ↔ English translation for automotive terms
-3. Fix common typos and provide correct spellings
-4. Include both singular and plural forms when relevant
-5. Add related terms that users might search for
-6. Return multiple terms separated by spaces for OR search logic
+ใช้คำพ้องเสียงเหล่านี้เพื่อปรับปรุงการค้นหา vector โดยเฉพาะ
+result=ข้อความต้นฉบับ + space + ข้อความพ้องเสียงที่เกี่ยวข้อง
+แบ่งคำให้ด้วย space และลบคำซ้ำ
+ข้อความต้นฉบับ: "%s"
 
-TRANSLATION EXAMPLES:
-- "โตโยต้า" → "โตโยต้า toyota TOYOTA"
-- "เบรค" → "เบรค brake brakes"
-- "toyota" → "toyota โตโยต้า TOYOTA"
-- "brake" → "brake เบรค brakes"
-- "โชคอัมพาต" → "โชคอัมพาต shock absorber damper"
+return เฉพาะ result
+`, originalQuery)
 
-TYPO CORRECTION:
-- "toyoda" → "toyota โตโยต้า TOYOTA"
-- "break" → "brake เบรค brakes"
-- "compresser" → "compressor คอมเพรสเซอร์"
-
-Return ALL relevant search terms separated by spaces (for OR search logic).
-
-User query: %s
-
-Enhanced search terms:`, query)
-
+	// เรียกใช้ DeepSeek API พร้อม timeout ที่เพิ่มขึ้น
 	reqBody := DeepSeekRequest{
 		Model: DeepSeekModel,
 		Messages: []Message{
@@ -1629,111 +1289,63 @@ Enhanced search terms:`, query)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+DeepSeekAPIKey)
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second} // เพิ่ม timeout เป็น 30 วินาที
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to call API: %w", err)
+		log.Printf("❌ [vector-enhance] DeepSeek API timeout/error: %v", err)
+		return "", fmt.Errorf("failed to call DeepSeek API: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+		log.Printf("❌ [vector-enhance] DeepSeek API status error: %d", resp.StatusCode)
+		return "", fmt.Errorf("DeepSeek API error: status %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.Printf("❌ [vector-enhance] Failed to read DeepSeek response: %v", err)
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
 
 	var deepSeekResp DeepSeekResponse
 	if err := json.Unmarshal(body, &deepSeekResp); err != nil {
-		return "", fmt.Errorf("failed to unmarshal response: %w", err)
+		return "", fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	if len(deepSeekResp.Choices) == 0 {
-		return "", fmt.Errorf("no choices in response")
+		return "", fmt.Errorf("no response from DeepSeek")
 	}
 
 	enhancedQuery := strings.TrimSpace(deepSeekResp.Choices[0].Message.Content)
+	log.Printf("🤖 [vector-enhance] DeepSeek API success: '%s' -> '%s'", originalQuery, enhancedQuery)
 	return enhancedQuery, nil
 }
 
-// fallbackEnhancement provides a fallback enhancement when DeepSeek API fails
-// Returns multiple search terms including original and translations
-func (h *APIHandler) fallbackEnhancement(originalQuery string) string {
-	log.Printf("🔄 [ai_enhance] Using fallback enhancement for: '%s'", originalQuery)
+// removeDuplicateWords ลบคำซ้ำจาก query string
+func (h *APIHandler) removeDuplicateWords(query string) string {
+	// ลบเครื่องหมายคำพูดออก
+	query = strings.Trim(query, `"'`)
 
-	// Normalize the query (trim and lowercase for comparison)
-	normalizedQuery := strings.TrimSpace(strings.ToLower(originalQuery))
+	// แยกคำด้วย space
+	words := strings.Fields(query)
 
-	// Translation and enhancement rules - return multiple terms
-	enhancements := map[string]string{
-		// Thai to English with both forms
-		"เบรค":      "เบรค brake brakes",
-		"ผ้าเบรค":   "ผ้าเบรค brake pad brakes",
-		"โตโยต้า":   "โตโยต้า toyota TOYOTA",
-		"น้ำมัน":    "น้ำมัน oil",
-		"ไฟ":        "ไฟ light lights",
-		"ล้อ":       "ล้อ wheel wheels",
-		"ยาง":       "ยาง tire tires",
-		"แบตเตอรี่": "แบตเตอรี่ battery",
-		"คอยล์":     "คอยล์ coil coils",
-		"โชคอัมพาต": "โชคอัมพาต shock absorber damper",
-
-		// English to Thai with variants
-		"toyota":  "toyota โตโยต้า TOYOTA",
-		"brake":   "brake เบรค brakes",
-		"oil":     "oil น้ำมัน",
-		"light":   "light ไฟ lights",
-		"wheel":   "wheel ล้อ wheels",
-		"tire":    "tire ยาง tires",
-		"battery": "battery แบตเตอรี่",
-		"coil":    "coil คอยล์ coils",
-		"shock":   "shock โชคอัมพาต absorber",
-
-		// Common typos with corrections
-		"break":      "brake เบรค brakes",
-		"toyoda":     "toyota โตโยต้า TOYOTA",
-		"compresser": "compressor คอมเพรสเซอร์",
-	}
-
-	// Check for direct enhancements
-	if enhanced, exists := enhancements[normalizedQuery]; exists {
-		log.Printf("🔄 [ai_enhance] Fallback enhancement: '%s' -> '%s'", originalQuery, enhanced)
-		return enhanced
-	}
-
-	// Check for partial matches and expansions
-	var allTerms []string
-	allTerms = append(allTerms, originalQuery) // Always include original
-
-	for key, value := range enhancements {
-		if strings.Contains(normalizedQuery, key) {
-			// Add all terms from the enhancement
-			terms := strings.Fields(value)
-			allTerms = append(allTerms, terms...)
-			break
-		}
-	}
-
-	// Remove duplicates and return
-	uniqueTerms := make(map[string]bool)
+	// ใช้ map เพื่อเก็บคำที่ไม่ซ้ำ (case insensitive)
+	seen := make(map[string]bool)
 	var result []string
-	for _, term := range allTerms {
-		if !uniqueTerms[term] {
-			uniqueTerms[term] = true
-			result = append(result, term)
+
+	for _, word := range words {
+		// ลบ special characters และทำให้เป็น lowercase สำหรับเปรียบเทียบ
+		normalizedWord := strings.ToLower(strings.Trim(word, ".,!?;:()[]{}"))
+
+		// ถ้ายังไม่เคยเห็นคำนี้
+		if !seen[normalizedWord] && normalizedWord != "" {
+			seen[normalizedWord] = true
+			result = append(result, word) // เก็บคำเดิม (ไม่ใช่ normalized)
 		}
 	}
 
-	enhanced := strings.Join(result, " ")
-	if enhanced != originalQuery {
-		log.Printf("🔄 [ai_enhance] Fallback partial match: '%s' -> '%s'", originalQuery, enhanced)
-		return enhanced
-	}
-
-	// If no enhancement found, return original
-	log.Printf("🔄 [ai_enhance] Fallback: no enhancement for '%s'", originalQuery)
-	return originalQuery
+	finalResult := strings.Join(result, " ")
+	log.Printf("🧹 [vector-enhance] Removed duplicates: '%s' -> '%s'", query, finalResult)
+	return finalResult
 }

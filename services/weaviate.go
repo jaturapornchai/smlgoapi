@@ -2,8 +2,10 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strconv"
+	"time"
 
 	"smlgoapi/config"
 
@@ -29,9 +31,28 @@ func NewWeaviateService(config *config.Config) (*WeaviateService, error) {
 	weaviateURL := config.GetWeaviateURL()
 	scheme := config.GetWeaviateScheme()
 
+	// If URL is empty, use default localhost
+	if weaviateURL == "" {
+		weaviateURL = "localhost:8080"
+		scheme = "http"
+		log.Printf("⚠️ Weaviate URL not configured, using default: http://localhost:8080")
+	}
+
 	cfg := weaviate.Config{
 		Host:   weaviateURL,
 		Scheme: scheme,
+	}
+
+	// Handle full URL format by extracting host part
+	if weaviateURL != "" && (weaviateURL[:7] == "http://" || weaviateURL[:8] == "https://") {
+		// If URL contains protocol, extract just the host:port part
+		if weaviateURL[:7] == "http://" {
+			cfg.Host = weaviateURL[7:]
+			cfg.Scheme = "http"
+		} else if weaviateURL[:8] == "https://" {
+			cfg.Host = weaviateURL[8:]
+			cfg.Scheme = "https"
+		}
 	}
 
 	client, err := weaviate.NewClient(cfg)
@@ -39,7 +60,17 @@ func NewWeaviateService(config *config.Config) (*WeaviateService, error) {
 		return nil, err
 	}
 
-	log.Printf("Connected to Weaviate at: %s", weaviateURL)
+	// Test connection by checking if Weaviate is ready
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ready, err := client.Misc().ReadyChecker().Do(ctx)
+	if err != nil || !ready {
+		log.Printf("⚠️ Weaviate connection test failed: %v", err)
+		return nil, fmt.Errorf("Weaviate server not reachable at %s://%s", cfg.Scheme, cfg.Host)
+	}
+
+	log.Printf("🔗 Connected to Weaviate at: %s://%s", cfg.Scheme, cfg.Host)
 
 	return &WeaviateService{
 		client: client,
