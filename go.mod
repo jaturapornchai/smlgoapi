@@ -12,9 +12,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/kljensen/snowball v0.10.0
 	github.com/lib/pq v1.10.9
-	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/weaviate/weaviate-go-client/v4 v4.16.1
-	golang.org/x/image v0.28.0
 )
 
 require (

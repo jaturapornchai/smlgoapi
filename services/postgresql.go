@@ -717,7 +717,299 @@ func (s *PostgreSQLService) SearchProducts(ctx context.Context, query string, li
 
 // SearchProductsByBarcodes performs search on the ic_inventory table using specific barcodes
 func (s *PostgreSQLService) SearchProductsByBarcodes(ctx context.Context, barcodes []string, limit, offset int) ([]map[string]interface{}, int, error) {
-	return s.SearchProductsByBarcodesWithRelevance(ctx, barcodes, nil, limit, offset)
+	// For now, treat barcodes as search terms
+	query := strings.Join(barcodes, " ")
+	return s.SearchProducts(ctx, query, limit, offset)
+}
+
+// Helper method to enrich results with price and balance data
+func (s *PostgreSQLService) enrichResultsWithPriceAndBalance(ctx context.Context, results []map[string]interface{}, icCodes []string) {
+	// Load price and balance data
+	log.Printf("🏷️ Loading price formula data for %d found items...", len(icCodes))
+	priceMap, err := s.LoadPriceFormulaFiltered(ctx, icCodes)
+	if err != nil {
+		log.Printf("⚠️ Failed to load price formula: %v - using default prices", err)
+		priceMap = make(map[string]*PriceInfo)
+	}
+
+	log.Printf("📦 Loading balance data for %d found items...", len(icCodes))
+	balanceMap, err := s.LoadBalanceDataFiltered(ctx, icCodes)
+	if err != nil {
+		log.Printf("⚠️ Failed to load balance data: %v - using default balance", err)
+		balanceMap = make(map[string]*BalanceInfo)
+	}
+
+	// Update results with price and balance data
+	for i, result := range results {
+		code := result["code"].(string)
+
+		// Look up real price data
+		if priceInfo, exists := priceMap[code]; exists {
+			salePrice := priceInfo.Price0
+			finalPrice := priceInfo.Price0
+			discountPrice := priceInfo.Price1
+
+			results[i]["sale_price"] = salePrice
+			results[i]["final_price"] = finalPrice
+			results[i]["discount_price"] = discountPrice
+			results[i]["price"] = salePrice
+
+			log.Printf("💰 Found price for %s: sale_price=%.2f, final_price=%.2f, discount_price=%.2f",
+				code, salePrice, finalPrice, discountPrice)
+		}
+
+		// Look up real balance data
+		if balanceInfo, exists := balanceMap[code]; exists {
+			qtyAvailable := balanceInfo.TotalQty
+			results[i]["qty_available"] = qtyAvailable
+			log.Printf("📦 Found balance for %s: qty_available=%.2f", code, qtyAvailable)
+		}
+	}
+}
+
+// SearchProductsByExactBarcode searches specifically in ic_inventory_barcode.barcode field
+func (s *PostgreSQLService) SearchProductsByExactBarcode(ctx context.Context, query string, limit, offset int) ([]map[string]interface{}, int, error) {
+	// First check if the ic_inventory_barcode table exists
+	checkTableQuery := `
+		SELECT COUNT(*) 
+		FROM information_schema.tables 
+		WHERE table_schema = 'public' 
+		AND table_name = 'ic_inventory_barcode'`
+
+	var tableExists int
+	err := s.db.QueryRowContext(ctx, checkTableQuery).Scan(&tableExists)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to check ic_inventory_barcode table existence: %w", err)
+	}
+
+	if tableExists == 0 {
+		log.Printf("⚠️ Table 'ic_inventory_barcode' not found, skipping barcode search")
+		return []map[string]interface{}{}, 0, nil
+	}
+
+	// Search for exact barcode match
+	whereClause := "CAST(ib.barcode AS TEXT) = $1"
+
+	// Get count of matching records
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*) as total_count
+		FROM ic_inventory_barcode ib
+		INNER JOIN ic_inventory i ON CAST(ib.ic_code AS TEXT) = CAST(i.code AS TEXT)
+		WHERE %s`, whereClause)
+
+	var totalCount int
+	err = s.db.QueryRowContext(ctx, countQuery, query).Scan(&totalCount)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to execute barcode count query: %w", err)
+	}
+
+	if totalCount == 0 {
+		return []map[string]interface{}{}, 0, nil
+	}
+
+	// Build search query
+	searchQuery := fmt.Sprintf(`
+		SELECT COALESCE(CAST(i.code AS TEXT), 'N/A') as code, 
+		       COALESCE(CAST(i.name AS TEXT), 'N/A') as name,
+		       COALESCE(CAST(i.unit_standard_code AS TEXT), 'N/A') as unit_standard_code,
+		       COALESCE(i.item_type, 0) as item_type,
+		       COALESCE(i.row_order_ref, 0) as row_order_ref,
+		       COALESCE(CAST(ib.barcode AS TEXT), 'N/A') as matched_barcode,
+		       10 as search_priority
+		FROM ic_inventory_barcode ib
+		INNER JOIN ic_inventory i ON CAST(ib.ic_code AS TEXT) = CAST(i.code AS TEXT)
+		WHERE %s
+		ORDER BY i.name ASC
+		LIMIT $2 OFFSET $3`, whereClause)
+
+	log.Printf("🔍 [BARCODE-SEARCH] SQL Query: %s", searchQuery)
+	log.Printf("🔍 [BARCODE-SEARCH] Parameters: [%s, %d, %d]", query, limit, offset)
+
+	rows, err := s.db.QueryContext(ctx, searchQuery, query, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to execute barcode search query: %w", err)
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	var icCodes []string
+
+	for rows.Next() {
+		var code, name, unitStandardCode, matchedBarcode string
+		var itemType, rowOrderRef, searchPriority int
+
+		err := rows.Scan(&code, &name, &unitStandardCode, &itemType, &rowOrderRef, &matchedBarcode, &searchPriority)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan barcode search result: %w", err)
+		}
+
+		icCodes = append(icCodes, code)
+
+		result := map[string]interface{}{
+			"id":                 code,
+			"code":               code,
+			"name":               name,
+			"unit_standard_code": unitStandardCode,
+			"item_type":          itemType,
+			"row_order_ref":      rowOrderRef,
+			"search_priority":    searchPriority,
+			"similarity_score":   float64(searchPriority),
+			"matched_barcode":    matchedBarcode,
+			"search_method":      "barcode_exact",
+
+			// Default values for pricing and inventory fields
+			"sale_price":         0.0,
+			"premium_word":       "N/A",
+			"discount_price":     0.0,
+			"discount_percent":   0.0,
+			"final_price":        0.0,
+			"sold_qty":           0.0,
+			"multi_packing":      0,
+			"multi_packing_name": "N/A",
+			"barcodes":           matchedBarcode,
+			"qty_available":      0.0,
+			"description":        "",
+			"price":              0.0,
+			"balance_qty":        0.0,
+			"unit":               unitStandardCode,
+			"supplier_code":      "N/A",
+			"img_url":            "",
+		}
+
+		results = append(results, result)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("barcode search rows iteration error: %w", err)
+	}
+
+	// Load price and balance data
+	if len(icCodes) > 0 {
+		s.enrichResultsWithPriceAndBalance(ctx, results, icCodes)
+	}
+
+	log.Printf("✅ [BARCODE-SEARCH] Found %d results for barcode '%s'", len(results), query)
+	return results, totalCount, nil
+}
+
+// SearchProductsByExactCode searches specifically in ic_inventory.code field
+func (s *PostgreSQLService) SearchProductsByExactCode(ctx context.Context, query string, limit, offset int) ([]map[string]interface{}, int, error) {
+	// First check if the ic_inventory table exists
+	checkTableQuery := `
+		SELECT COUNT(*) 
+		FROM information_schema.tables 
+		WHERE table_schema = 'public' 
+		AND table_name = 'ic_inventory'`
+
+	var tableExists int
+	err := s.db.QueryRowContext(ctx, checkTableQuery).Scan(&tableExists)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to check ic_inventory table existence: %w", err)
+	}
+
+	if tableExists == 0 {
+		return nil, 0, fmt.Errorf("table 'ic_inventory' not found in database")
+	}
+
+	// Search for exact code match
+	whereClause := "CAST(code AS TEXT) = $1"
+
+	// Get count of matching records
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*) as total_count
+		FROM ic_inventory 
+		WHERE %s`, whereClause)
+
+	var totalCount int
+	err = s.db.QueryRowContext(ctx, countQuery, query).Scan(&totalCount)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to execute code count query: %w", err)
+	}
+
+	if totalCount == 0 {
+		return []map[string]interface{}{}, 0, nil
+	}
+
+	// Build search query
+	searchQuery := fmt.Sprintf(`
+		SELECT COALESCE(CAST(code AS TEXT), 'N/A') as code, 
+		       COALESCE(CAST(name AS TEXT), 'N/A') as name,
+		       COALESCE(CAST(unit_standard_code AS TEXT), 'N/A') as unit_standard_code,
+		       COALESCE(item_type, 0) as item_type,
+		       COALESCE(row_order_ref, 0) as row_order_ref,
+		       8 as search_priority
+		FROM ic_inventory 
+		WHERE %s
+		ORDER BY name ASC
+		LIMIT $2 OFFSET $3`, whereClause)
+
+	log.Printf("🔍 [CODE-SEARCH] SQL Query: %s", searchQuery)
+	log.Printf("🔍 [CODE-SEARCH] Parameters: [%s, %d, %d]", query, limit, offset)
+
+	rows, err := s.db.QueryContext(ctx, searchQuery, query, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to execute code search query: %w", err)
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	var icCodes []string
+
+	for rows.Next() {
+		var code, name, unitStandardCode string
+		var itemType, rowOrderRef, searchPriority int
+
+		err := rows.Scan(&code, &name, &unitStandardCode, &itemType, &rowOrderRef, &searchPriority)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan code search result: %w", err)
+		}
+
+		icCodes = append(icCodes, code)
+
+		result := map[string]interface{}{
+			"id":                 code,
+			"code":               code,
+			"name":               name,
+			"unit_standard_code": unitStandardCode,
+			"item_type":          itemType,
+			"row_order_ref":      rowOrderRef,
+			"search_priority":    searchPriority,
+			"similarity_score":   float64(searchPriority),
+			"search_method":      "code_exact",
+
+			// Default values for pricing and inventory fields
+			"sale_price":         0.0,
+			"premium_word":       "N/A",
+			"discount_price":     0.0,
+			"discount_percent":   0.0,
+			"final_price":        0.0,
+			"sold_qty":           0.0,
+			"multi_packing":      0,
+			"multi_packing_name": "N/A",
+			"barcodes":           "N/A",
+			"qty_available":      0.0,
+			"description":        "",
+			"price":              0.0,
+			"balance_qty":        0.0,
+			"unit":               unitStandardCode,
+			"supplier_code":      "N/A",
+			"img_url":            "",
+		}
+
+		results = append(results, result)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("code search rows iteration error: %w", err)
+	}
+
+	// Load price and balance data
+	if len(icCodes) > 0 {
+		s.enrichResultsWithPriceAndBalance(ctx, results, icCodes)
+	}
+
+	log.Printf("✅ [CODE-SEARCH] Found %d results for code '%s'", len(results), query)
+	return results, totalCount, nil
 }
 
 // SearchProductsByBarcodesWithRelevance performs search on the ic_inventory table using specific barcodes with relevance scores
@@ -799,36 +1091,27 @@ func (s *PostgreSQLService) SearchProductsByBarcodesWithRelevanceAndBarcodeMap(c
 		       COALESCE(CAST(unit_standard_code AS TEXT), 'N/A') as unit_standard_code,
 		       COALESCE(item_type, 0) as item_type,
 		       COALESCE(row_order_ref, 0) as row_order_ref,
-		       5 as search_priority
+		       6 as search_priority
 		FROM ic_inventory 
 		WHERE %s
 		%s
 		LIMIT $%d OFFSET $%d`,
 		whereClause, orderClause, len(params)+1, len(params)+2)
 
-	// Prepare parameters for search query
-	searchParams := make([]interface{}, 0)
-	searchParams = append(searchParams, params...) // barcode parameters
-	searchParams = append(searchParams, limit)     // limit
-	searchParams = append(searchParams, offset)    // offset
+	// Add limit and offset to parameters
+	params = append(params, limit, offset)
 
-	// Log the search summary instead of full SQL
-	log.Printf("🔍 [PostgreSQL] Searching by %s codes: %d items, limit=%d, offset=%d",
-		func() string {
-			if strings.Contains(searchQuery, "ORDER BY") && strings.Contains(searchQuery, "CASE") {
-				return "IC/Barcode (with relevance)"
-			}
-			return "IC/Barcode"
-		}(), len(params), limit, offset)
+	log.Printf("🔍 [BARCODE-MAP-SEARCH] SQL Query: %s", searchQuery)
+	log.Printf("🔍 [BARCODE-MAP-SEARCH] Parameters: %v", params)
 
-	rows, err := s.db.QueryContext(ctx, searchQuery, searchParams...)
+	rows, err := s.db.QueryContext(ctx, searchQuery, params...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to execute barcode search query: %w", err)
+		return nil, 0, fmt.Errorf("failed to execute search query: %w", err)
 	}
 	defer rows.Close()
 
 	var results []map[string]interface{}
-	var icCodes []string // Collect ic_codes for filtered price/balance loading
+	var icCodes []string
 
 	for rows.Next() {
 		var code, name, unitStandardCode string
@@ -836,64 +1119,56 @@ func (s *PostgreSQLService) SearchProductsByBarcodesWithRelevanceAndBarcodeMap(c
 
 		err := rows.Scan(&code, &name, &unitStandardCode, &itemType, &rowOrderRef, &searchPriority)
 		if err != nil {
-			return nil, 0, fmt.Errorf("failed to scan barcode search result: %w", err)
+			return nil, 0, fmt.Errorf("failed to scan search result: %w", err)
 		}
 
-		icCodes = append(icCodes, code) // Collect ic_code for later price/balance lookup
+		icCodes = append(icCodes, code)
 
-		// Default values for pricing and inventory fields
-		var salePrice, discountPrice, discountPercent, finalPrice, soldQty, qtyAvailable float64 = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-		premiumWord := "N/A"
-		multiPacking := 0
-		multiPackingName := "N/A"
-		barcodesField := code // Use the code as default barcodes field
-
-		// Get the actual barcode from the mapping if available
-		actualBarcode := code // Default to code
-		if barcodeMap != nil {
-			if mappedBarcode, exists := barcodeMap[code]; exists {
-				actualBarcode = mappedBarcode
-			}
-		}
-
-		// Get relevance score from map if available
-		var relevanceScore float64 = float64(searchPriority) // Default to search priority
+		// Get relevance score if available
+		relevanceScore := 0.0
 		if relevanceMap != nil {
 			if score, exists := relevanceMap[code]; exists {
 				relevanceScore = score
 			}
 		}
 
+		// Get barcode mapping if available
+		mappedBarcode := "N/A"
+		if barcodeMap != nil {
+			if barcode, exists := barcodeMap[code]; exists {
+				mappedBarcode = barcode
+			}
+		}
+
 		result := map[string]interface{}{
-			"id":                 code, // Use code as id since there's no separate id field
+			"id":                 code,
 			"code":               code,
 			"name":               name,
 			"unit_standard_code": unitStandardCode,
 			"item_type":          itemType,
 			"row_order_ref":      rowOrderRef,
 			"search_priority":    searchPriority,
-			"similarity_score":   relevanceScore, // Use relevance score from Weaviate
+			"similarity_score":   relevanceScore,
+			"barcode":            mappedBarcode,
+			"search_method":      "barcode_mapping",
 
-			// Pricing and inventory fields (will be updated below)
-			"sale_price":         salePrice,
-			"premium_word":       premiumWord,
-			"discount_price":     discountPrice,
-			"discount_percent":   discountPercent,
-			"final_price":        finalPrice,
-			"sold_qty":           soldQty,
-			"multi_packing":      multiPacking,
-			"multi_packing_name": multiPackingName,
-			"barcodes":           barcodesField,
-			"barcode":            actualBarcode, // Add the actual barcode from Weaviate
-			"qty_available":      qtyAvailable,
-
-			// Legacy fields for backward compatibility
-			"description":   "",        // Not available in ic_inventory
-			"price":         salePrice, // Map to sale_price for compatibility
-			"balance_qty":   0.0,       // Not available in ic_inventory
-			"unit":          unitStandardCode,
-			"supplier_code": "N/A", // Not available in ic_inventory
-			"img_url":       "",    // Not available in ic_inventory
+			// Default values for pricing and inventory fields
+			"sale_price":         0.0,
+			"premium_word":       "N/A",
+			"discount_price":     0.0,
+			"discount_percent":   0.0,
+			"final_price":        0.0,
+			"sold_qty":           0.0,
+			"multi_packing":      0,
+			"multi_packing_name": "N/A",
+			"barcodes":           mappedBarcode,
+			"qty_available":      0.0,
+			"description":        "",
+			"price":              0.0,
+			"balance_qty":        0.0,
+			"unit":               unitStandardCode,
+			"supplier_code":      "N/A",
+			"img_url":            "",
 		}
 
 		results = append(results, result)
@@ -903,57 +1178,465 @@ func (s *PostgreSQLService) SearchProductsByBarcodesWithRelevanceAndBarcodeMap(c
 		return nil, 0, fmt.Errorf("rows iteration error: %w", err)
 	}
 
-	// Now load price and balance data only for the found products
+	// Load price and balance data
 	if len(icCodes) > 0 {
-		log.Printf("🏷️ [PostgreSQL] Loading price data for %d products...", len(icCodes))
-		priceMap, err := s.LoadPriceFormulaFiltered(ctx, icCodes)
-		if err != nil {
-			log.Printf("⚠️ [PostgreSQL] Failed to load price formula: %v - using default prices", err)
-			priceMap = make(map[string]*PriceInfo)
-		} else {
-			log.Printf("✅ [PostgreSQL] Loaded price data for %d products", len(priceMap))
-		}
-
-		log.Printf("📦 [PostgreSQL] Loading balance data for %d products...", len(icCodes))
-		balanceMap, err := s.LoadBalanceDataFiltered(ctx, icCodes)
-		if err != nil {
-			log.Printf("⚠️ [PostgreSQL] Failed to load balance data: %v - using default balance", err)
-			balanceMap = make(map[string]*BalanceInfo)
-		} else {
-			log.Printf("✅ [PostgreSQL] Loaded balance data for %d products", len(balanceMap))
-		}
-
-		// Update results with price and balance data
-		priceFoundCount := 0
-		balanceFoundCount := 0
-		for i, result := range results {
-			code := result["code"].(string)
-
-			// Look up real price data
-			if priceInfo, exists := priceMap[code]; exists {
-				salePrice := priceInfo.Price0     // Use price_0 as sale_price
-				finalPrice := priceInfo.Price0    // Use price_0 as final_price too
-				discountPrice := priceInfo.Price1 // Use price_1 as discount_price if available
-
-				results[i]["sale_price"] = salePrice
-				results[i]["final_price"] = finalPrice
-				results[i]["discount_price"] = discountPrice
-				results[i]["price"] = salePrice // Update legacy field too
-				priceFoundCount++
-			}
-
-			// Look up real balance data
-			if balanceInfo, exists := balanceMap[code]; exists {
-				qtyAvailable := balanceInfo.TotalQty // Use sum of balance_qty as qty_available
-				results[i]["qty_available"] = qtyAvailable
-				balanceFoundCount++
-			}
-		}
-
-		log.Printf("� [PostgreSQL] Price data: %d/%d products have pricing", priceFoundCount, len(results))
-		log.Printf("📦 [PostgreSQL] Balance data: %d/%d products have stock info", balanceFoundCount, len(results))
+		s.enrichResultsWithPriceAndBalance(ctx, results, icCodes)
 	}
 
-	log.Printf("✅ [PostgreSQL] Search completed: found %d results, total count: %d", len(results), totalCount)
+	log.Printf("✅ [BARCODE-MAP-SEARCH] Found %d results", len(results))
+	return results, totalCount, nil
+}
+
+// SearchProductsByLikeBarcode performs LIKE search in ic_inventory_barcode.barcode field
+func (s *PostgreSQLService) SearchProductsByLikeBarcode(ctx context.Context, query string, limit, offset int) ([]map[string]interface{}, int, error) {
+	// First check if the ic_inventory_barcode table exists
+	checkTableQuery := `
+		SELECT COUNT(*) 
+		FROM information_schema.tables 
+		WHERE table_schema = 'public' 
+		AND table_name = 'ic_inventory_barcode'`
+
+	var tableExists int
+	err := s.db.QueryRowContext(ctx, checkTableQuery).Scan(&tableExists)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to check ic_inventory_barcode table existence: %w", err)
+	}
+
+	if tableExists == 0 {
+		log.Printf("⚠️ Table 'ic_inventory_barcode' not found, skipping barcode LIKE search")
+		return []map[string]interface{}{}, 0, nil
+	}
+
+	// Simple LIKE search in barcode field
+	whereClause := "CAST(ib.barcode AS TEXT) LIKE $1"
+
+	// Get count of matching records
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*) as total_count
+		FROM ic_inventory_barcode ib
+		INNER JOIN ic_inventory i ON CAST(ib.ic_code AS TEXT) = CAST(i.code AS TEXT)
+		WHERE %s`, whereClause)
+
+	var totalCount int
+	queryWithWildcards := "%" + query + "%"
+	err = s.db.QueryRowContext(ctx, countQuery, queryWithWildcards).Scan(&totalCount)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to execute barcode LIKE count query: %w", err)
+	}
+
+	if totalCount == 0 {
+		return []map[string]interface{}{}, 0, nil
+	}
+
+	// Build search query
+	searchQuery := fmt.Sprintf(`
+		SELECT COALESCE(CAST(i.code AS TEXT), 'N/A') as code, 
+		       COALESCE(CAST(i.name AS TEXT), 'N/A') as name,
+		       COALESCE(CAST(i.unit_standard_code AS TEXT), 'N/A') as unit_standard_code,
+		       COALESCE(i.item_type, 0) as item_type,
+		       COALESCE(i.row_order_ref, 0) as row_order_ref,
+		       COALESCE(CAST(ib.barcode AS TEXT), 'N/A') as matched_barcode,
+		       7 as search_priority
+		FROM ic_inventory_barcode ib
+		INNER JOIN ic_inventory i ON CAST(ib.ic_code AS TEXT) = CAST(i.code AS TEXT)
+		WHERE %s
+		ORDER BY i.name ASC
+		LIMIT $2 OFFSET $3`, whereClause)
+
+	log.Printf("🔍 [BARCODE-LIKE-SEARCH] SQL Query: %s", searchQuery)
+	log.Printf("🔍 [BARCODE-LIKE-SEARCH] Parameters: [%s, %d, %d]", queryWithWildcards, limit, offset)
+
+	rows, err := s.db.QueryContext(ctx, searchQuery, queryWithWildcards, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to execute barcode LIKE search query: %w", err)
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	var icCodes []string
+
+	for rows.Next() {
+		var code, name, unitStandardCode, matchedBarcode string
+		var itemType, rowOrderRef, searchPriority int
+
+		err := rows.Scan(&code, &name, &unitStandardCode, &itemType, &rowOrderRef, &matchedBarcode, &searchPriority)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan barcode LIKE search result: %w", err)
+		}
+
+		icCodes = append(icCodes, code)
+
+		result := map[string]interface{}{
+			"id":                 code,
+			"code":               code,
+			"name":               name,
+			"unit_standard_code": unitStandardCode,
+			"item_type":          itemType,
+			"row_order_ref":      rowOrderRef,
+			"search_priority":    searchPriority,
+			"similarity_score":   float64(searchPriority),
+			"matched_barcode":    matchedBarcode,
+			"search_method":      "barcode_like",
+
+			// Default values for pricing and inventory fields
+			"sale_price":         0.0,
+			"premium_word":       "N/A",
+			"discount_price":     0.0,
+			"discount_percent":   0.0,
+			"final_price":        0.0,
+			"sold_qty":           0.0,
+			"multi_packing":      0,
+			"multi_packing_name": "N/A",
+			"barcodes":           matchedBarcode,
+			"qty_available":      0.0,
+			"description":        "",
+			"price":              0.0,
+			"balance_qty":        0.0,
+			"unit":               unitStandardCode,
+			"supplier_code":      "N/A",
+			"img_url":            "",
+		}
+
+		results = append(results, result)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("barcode LIKE search rows iteration error: %w", err)
+	}
+
+	// Load price and balance data
+	if len(icCodes) > 0 {
+		s.enrichResultsWithPriceAndBalance(ctx, results, icCodes)
+	}
+
+	log.Printf("✅ [BARCODE-LIKE-SEARCH] Found %d results for barcode pattern '%s'", len(results), query)
+	return results, totalCount, nil
+}
+
+// SearchProductsByLikeCode performs LIKE search in ic_inventory.code field
+func (s *PostgreSQLService) SearchProductsByLikeCode(ctx context.Context, query string, limit, offset int) ([]map[string]interface{}, int, error) {
+	// First check if the ic_inventory table exists
+	checkTableQuery := `
+		SELECT COUNT(*) 
+		FROM information_schema.tables 
+		WHERE table_schema = 'public' 
+		AND table_name = 'ic_inventory'`
+
+	var tableExists int
+	err := s.db.QueryRowContext(ctx, checkTableQuery).Scan(&tableExists)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to check ic_inventory table existence: %w", err)
+	}
+
+	if tableExists == 0 {
+		return nil, 0, fmt.Errorf("table 'ic_inventory' not found in database")
+	}
+
+	// Simple LIKE search in code field
+	whereClause := "CAST(code AS TEXT) LIKE $1"
+
+	// Get count of matching records
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*) as total_count
+		FROM ic_inventory 
+		WHERE %s`, whereClause)
+
+	var totalCount int
+	queryWithWildcards := "%" + query + "%"
+	err = s.db.QueryRowContext(ctx, countQuery, queryWithWildcards).Scan(&totalCount)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to execute code LIKE count query: %w", err)
+	}
+
+	if totalCount == 0 {
+		return []map[string]interface{}{}, 0, nil
+	}
+
+	// Build search query
+	searchQuery := fmt.Sprintf(`
+		SELECT COALESCE(CAST(code AS TEXT), 'N/A') as code, 
+		       COALESCE(CAST(name AS TEXT), 'N/A') as name,
+		       COALESCE(CAST(unit_standard_code AS TEXT), 'N/A') as unit_standard_code,
+		       COALESCE(item_type, 0) as item_type,
+		       COALESCE(row_order_ref, 0) as row_order_ref,
+		       5 as search_priority
+		FROM ic_inventory 
+		WHERE %s
+		ORDER BY name ASC
+		LIMIT $2 OFFSET $3`, whereClause)
+
+	log.Printf("🔍 [CODE-LIKE-SEARCH] SQL Query: %s", searchQuery)
+	log.Printf("🔍 [CODE-LIKE-SEARCH] Parameters: [%s, %d, %d]", queryWithWildcards, limit, offset)
+
+	rows, err := s.db.QueryContext(ctx, searchQuery, queryWithWildcards, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to execute code LIKE search query: %w", err)
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	var icCodes []string
+
+	for rows.Next() {
+		var code, name, unitStandardCode string
+		var itemType, rowOrderRef, searchPriority int
+
+		err := rows.Scan(&code, &name, &unitStandardCode, &itemType, &rowOrderRef, &searchPriority)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan code LIKE search result: %w", err)
+		}
+
+		icCodes = append(icCodes, code)
+
+		result := map[string]interface{}{
+			"id":                 code,
+			"code":               code,
+			"name":               name,
+			"unit_standard_code": unitStandardCode,
+			"item_type":          itemType,
+			"row_order_ref":      rowOrderRef,
+			"search_priority":    searchPriority,
+			"similarity_score":   float64(searchPriority),
+			"search_method":      "code_like",
+
+			// Default values for pricing and inventory fields
+			"sale_price":         0.0,
+			"premium_word":       "N/A",
+			"discount_price":     0.0,
+			"discount_percent":   0.0,
+			"final_price":        0.0,
+			"sold_qty":           0.0,
+			"multi_packing":      0,
+			"multi_packing_name": "N/A",
+			"barcodes":           "N/A",
+			"qty_available":      0.0,
+			"description":        "",
+			"price":              0.0,
+			"balance_qty":        0.0,
+			"unit":               unitStandardCode,
+			"supplier_code":      "N/A",
+			"img_url":            "",
+		}
+
+		results = append(results, result)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("code LIKE search rows iteration error: %w", err)
+	}
+
+	// Load price and balance data
+	if len(icCodes) > 0 {
+		s.enrichResultsWithPriceAndBalance(ctx, results, icCodes)
+	}
+
+	log.Printf("✅ [CODE-LIKE-SEARCH] Found %d results for code pattern '%s'", len(results), query)
+	return results, totalCount, nil
+}
+
+// SearchProductsSimpleLike performs simple LIKE search in both barcode and code fields
+func (s *PostgreSQLService) SearchProductsSimpleLike(ctx context.Context, query string, limit, offset int) ([]map[string]interface{}, int, error) {
+	if strings.TrimSpace(query) == "" {
+		return []map[string]interface{}{}, 0, nil
+	}
+
+	// Add wildcards to query
+	queryWithWildcards := "%" + query + "%"
+
+	log.Printf("🔍 [SIMPLE-LIKE-SEARCH] Searching for: '%s' in both barcode and code fields", query)
+
+	// Check if tables exist
+	checkBarcodeTableQuery := `
+		SELECT COUNT(*) 
+		FROM information_schema.tables 
+		WHERE table_schema = 'public' 
+		AND table_name = 'ic_inventory_barcode'`
+
+	checkInventoryTableQuery := `
+		SELECT COUNT(*) 
+		FROM information_schema.tables 
+		WHERE table_schema = 'public' 
+		AND table_name = 'ic_inventory'`
+
+	var barcodeTableExists, inventoryTableExists int
+
+	err := s.db.QueryRowContext(ctx, checkBarcodeTableQuery).Scan(&barcodeTableExists)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to check barcode table existence: %w", err)
+	}
+
+	err = s.db.QueryRowContext(ctx, checkInventoryTableQuery).Scan(&inventoryTableExists)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to check inventory table existence: %w", err)
+	}
+
+	if inventoryTableExists == 0 {
+		return nil, 0, fmt.Errorf("table 'ic_inventory' not found in database")
+	}
+
+	var unionQuery string
+	var params []interface{}
+
+	if barcodeTableExists > 0 {
+		// Union query to search both barcode and code fields
+		unionQuery = `
+		SELECT * FROM (
+			-- Search in barcode table
+			SELECT DISTINCT
+				COALESCE(CAST(i.code AS TEXT), 'N/A') as code, 
+				COALESCE(CAST(i.name AS TEXT), 'N/A') as name,
+				COALESCE(CAST(i.unit_standard_code AS TEXT), 'N/A') as unit_standard_code,
+				COALESCE(i.item_type, 0) as item_type,
+				COALESCE(i.row_order_ref, 0) as row_order_ref,
+				COALESCE(CAST(ib.barcode AS TEXT), 'N/A') as matched_barcode,
+				'barcode' as search_source,
+				9 as search_priority
+			FROM ic_inventory_barcode ib
+			INNER JOIN ic_inventory i ON CAST(ib.ic_code AS TEXT) = CAST(i.code AS TEXT)
+			WHERE CAST(ib.barcode AS TEXT) LIKE $1
+			
+			UNION
+			
+			-- Search in code field
+			SELECT DISTINCT
+				COALESCE(CAST(code AS TEXT), 'N/A') as code, 
+				COALESCE(CAST(name AS TEXT), 'N/A') as name,
+				COALESCE(CAST(unit_standard_code AS TEXT), 'N/A') as unit_standard_code,
+				COALESCE(item_type, 0) as item_type,
+				COALESCE(row_order_ref, 0) as row_order_ref,
+				'N/A' as matched_barcode,
+				'code' as search_source,
+				7 as search_priority
+			FROM ic_inventory 
+			WHERE CAST(code AS TEXT) LIKE $2
+		) combined_results
+		ORDER BY search_priority DESC, name ASC
+		LIMIT $3 OFFSET $4`
+
+		params = []interface{}{queryWithWildcards, queryWithWildcards, limit, offset}
+	} else {
+		// Only search in code field if barcode table doesn't exist
+		log.Printf("⚠️ Table 'ic_inventory_barcode' not found, searching only in code field")
+		unionQuery = `
+		SELECT DISTINCT
+			COALESCE(CAST(code AS TEXT), 'N/A') as code, 
+			COALESCE(CAST(name AS TEXT), 'N/A') as name,
+			COALESCE(CAST(unit_standard_code AS TEXT), 'N/A') as unit_standard_code,
+			COALESCE(item_type, 0) as item_type,
+			COALESCE(row_order_ref, 0) as row_order_ref,
+			'N/A' as matched_barcode,
+			'code' as search_source,
+			7 as search_priority
+		FROM ic_inventory 
+		WHERE CAST(code AS TEXT) LIKE $1
+		ORDER BY name ASC
+		LIMIT $2 OFFSET $3`
+
+		params = []interface{}{queryWithWildcards, limit, offset}
+	}
+
+	log.Printf("🔍 [SIMPLE-LIKE-SEARCH] SQL Query: %s", unionQuery)
+	log.Printf("🔍 [SIMPLE-LIKE-SEARCH] Parameters: %v", params)
+
+	rows, err := s.db.QueryContext(ctx, unionQuery, params...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to execute simple LIKE search query: %w", err)
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	var icCodes []string
+
+	for rows.Next() {
+		var code, name, unitStandardCode, matchedBarcode, searchSource string
+		var itemType, rowOrderRef, searchPriority int
+
+		err := rows.Scan(&code, &name, &unitStandardCode, &itemType, &rowOrderRef, &matchedBarcode, &searchSource, &searchPriority)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan simple LIKE search result: %w", err)
+		}
+
+		icCodes = append(icCodes, code)
+
+		result := map[string]interface{}{
+			"id":                 code,
+			"code":               code,
+			"name":               name,
+			"unit_standard_code": unitStandardCode,
+			"item_type":          itemType,
+			"row_order_ref":      rowOrderRef,
+			"search_priority":    searchPriority,
+			"similarity_score":   float64(searchPriority),
+			"matched_barcode":    matchedBarcode,
+			"search_method":      "simple_like_" + searchSource,
+			"search_source":      searchSource,
+
+			// Default values for pricing and inventory fields
+			"sale_price":         0.0,
+			"premium_word":       "N/A",
+			"discount_price":     0.0,
+			"discount_percent":   0.0,
+			"final_price":        0.0,
+			"sold_qty":           0.0,
+			"multi_packing":      0,
+			"multi_packing_name": "N/A",
+			"barcodes":           matchedBarcode,
+			"qty_available":      0.0,
+			"description":        "",
+			"price":              0.0,
+			"balance_qty":        0.0,
+			"unit":               unitStandardCode,
+			"supplier_code":      "N/A",
+			"img_url":            "",
+		}
+
+		results = append(results, result)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("simple LIKE search rows iteration error: %w", err)
+	}
+
+	// Get total count for pagination
+	var countQuery string
+	var countParams []interface {
+	}
+
+	if barcodeTableExists > 0 {
+		countQuery = `
+		SELECT COUNT(*) FROM (
+			SELECT DISTINCT i.code
+			FROM ic_inventory_barcode ib
+			INNER JOIN ic_inventory i ON CAST(ib.ic_code AS TEXT) = CAST(i.code AS TEXT)
+			WHERE CAST(ib.barcode AS TEXT) LIKE $1
+			
+			UNION
+			
+			SELECT DISTINCT code
+			FROM ic_inventory 
+			WHERE CAST(code AS TEXT) LIKE $2
+		) combined_count`
+		countParams = []interface{}{queryWithWildcards, queryWithWildcards}
+	} else {
+		countQuery = `
+		SELECT COUNT(DISTINCT code)
+		FROM ic_inventory 
+		WHERE CAST(code AS TEXT) LIKE $1`
+		countParams = []interface{}{queryWithWildcards}
+	}
+
+	var totalCount int
+	err = s.db.QueryRowContext(ctx, countQuery, countParams...).Scan(&totalCount)
+	if err != nil {
+		log.Printf("⚠️ Failed to get total count: %v", err)
+		totalCount = len(results) // Fallback to result count
+	}
+
+	// Load price and balance data
+	if len(icCodes) > 0 {
+		s.enrichResultsWithPriceAndBalance(ctx, results, icCodes)
+	}
+
+	log.Printf("✅ [SIMPLE-LIKE-SEARCH] Found %d results for pattern '%s'", len(results), query)
 	return results, totalCount, nil
 }
