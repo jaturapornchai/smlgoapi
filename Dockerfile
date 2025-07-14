@@ -19,21 +19,21 @@ COPY . .
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o smlgoapi .
 
-# Final stage
-FROM alpine:latest
+# # Final stage
+# FROM alpine:latest
 
-# Install ca-certificates for HTTPS requests
-RUN apk --no-cache add ca-certificates
+# # Install ca-certificates for HTTPS requests
+# RUN apk --no-cache add ca-certificates
 
-# Create non-root user
-RUN addgroup -g 1001 -S appgroup && \
-    adduser -u 1001 -S appuser -G appgroup
+# # Create non-root user
+# RUN addgroup -g 1001 -S appgroup && \
+#     adduser -u 1001 -S appuser -G appgroup
 
-# Set working directory
-WORKDIR /app
+# # Set working directory
+# WORKDIR /app
 
-# Copy binary from builder stage
-COPY --from=builder /app/smlgoapi .
+# # Copy binary from builder stage
+# COPY --from=builder /app/smlgoapi .
 
 # Create image_cache directory and set ownership
 RUN mkdir -p /app/image_cache && \
