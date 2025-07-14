@@ -25,9 +25,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o smlgoapi .
 # # Install ca-certificates for HTTPS requests
 # RUN apk --no-cache add ca-certificates
 
-# # Create non-root user
-# RUN addgroup -g 1001 -S appgroup && \
-#     adduser -u 1001 -S appuser -G appgroup
+# Create non-root user
+RUN addgroup -g 1001 -S appgroup && \
+    adduser -u 1001 -S appuser -G appgroup
 
 # # Set working directory
 # WORKDIR /app
