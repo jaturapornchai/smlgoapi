@@ -815,6 +815,7 @@ func (s *PostgreSQLService) SearchProductsByExactBarcode(ctx context.Context, qu
 		       COALESCE(i.item_type, 0) as item_type,
 		       COALESCE(i.row_order_ref, 0) as row_order_ref,
 		       COALESCE(CAST(ib.barcode AS TEXT), 'N/A') as matched_barcode,
+			   COALESCE(CAST(ib.image_url AS TEXT), '') as image_url,
 		       10 as search_priority
 		FROM ic_inventory_barcode ib
 		INNER JOIN ic_inventory i ON CAST(ib.ic_code AS TEXT) = CAST(i.code AS TEXT)
@@ -835,10 +836,10 @@ func (s *PostgreSQLService) SearchProductsByExactBarcode(ctx context.Context, qu
 	var icCodes []string
 
 	for rows.Next() {
-		var code, name, unitStandardCode, matchedBarcode string
+		var code, name, unitStandardCode, matchedBarcode, imageURL string
 		var itemType, rowOrderRef, searchPriority int
 
-		err := rows.Scan(&code, &name, &unitStandardCode, &itemType, &rowOrderRef, &matchedBarcode, &searchPriority)
+		err := rows.Scan(&code, &name, &unitStandardCode, &itemType, &rowOrderRef, &matchedBarcode, &imageURL, &searchPriority)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan barcode search result: %w", err)
 		}
@@ -873,7 +874,7 @@ func (s *PostgreSQLService) SearchProductsByExactBarcode(ctx context.Context, qu
 			"balance_qty":        0.0,
 			"unit":               unitStandardCode,
 			"supplier_code":      "N/A",
-			"img_url":            "",
+			"img_url":            imageURL,
 		}
 
 		results = append(results, result)
@@ -1086,13 +1087,20 @@ func (s *PostgreSQLService) SearchProductsByBarcodesWithRelevanceAndBarcodeMap(c
 	}
 
 	searchQuery := fmt.Sprintf(`
-		SELECT COALESCE(CAST(code AS TEXT), 'N/A') as code, 
-		       COALESCE(CAST(name AS TEXT), 'N/A') as name,
-		       COALESCE(CAST(unit_standard_code AS TEXT), 'N/A') as unit_standard_code,
-		       COALESCE(item_type, 0) as item_type,
-		       COALESCE(row_order_ref, 0) as row_order_ref,
-		       6 as search_priority
-		FROM ic_inventory 
+		SELECT COALESCE(CAST(i.code AS TEXT), 'N/A') as code, 
+			COALESCE(CAST(i.name AS TEXT), 'N/A') as name,
+			COALESCE(CAST(i.unit_standard_code AS TEXT), 'N/A') as unit_standard_code,
+			COALESCE(i.item_type, 0) as item_type,
+			COALESCE(i.row_order_ref, 0) as row_order_ref,
+			COALESCE(ib.image_url, '') as image_url,
+			6 as search_priority
+		FROM ic_inventory i
+		LEFT JOIN (
+			SELECT ic_code, MAX(image_url) as image_url
+			FROM ic_inventory_barcode
+			WHERE image_url IS NOT NULL AND image_url != ''
+			GROUP BY ic_code
+		) ib ON ib.ic_code = i.code
 		WHERE %s
 		%s
 		LIMIT $%d OFFSET $%d`,
@@ -1114,10 +1122,10 @@ func (s *PostgreSQLService) SearchProductsByBarcodesWithRelevanceAndBarcodeMap(c
 	var icCodes []string
 
 	for rows.Next() {
-		var code, name, unitStandardCode string
+		var code, name, unitStandardCode, imageURL string
 		var itemType, rowOrderRef, searchPriority int
 
-		err := rows.Scan(&code, &name, &unitStandardCode, &itemType, &rowOrderRef, &searchPriority)
+		err := rows.Scan(&code, &name, &unitStandardCode, &itemType, &rowOrderRef, &imageURL, &searchPriority)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan search result: %w", err)
 		}
@@ -1168,7 +1176,7 @@ func (s *PostgreSQLService) SearchProductsByBarcodesWithRelevanceAndBarcodeMap(c
 			"balance_qty":        0.0,
 			"unit":               unitStandardCode,
 			"supplier_code":      "N/A",
-			"img_url":            "",
+			"img_url":            imageURL,
 		}
 
 		results = append(results, result)
@@ -1231,12 +1239,13 @@ func (s *PostgreSQLService) SearchProductsByLikeBarcode(ctx context.Context, que
 	// Build search query
 	searchQuery := fmt.Sprintf(`
 		SELECT COALESCE(CAST(i.code AS TEXT), 'N/A') as code, 
-		       COALESCE(CAST(i.name AS TEXT), 'N/A') as name,
-		       COALESCE(CAST(i.unit_standard_code AS TEXT), 'N/A') as unit_standard_code,
-		       COALESCE(i.item_type, 0) as item_type,
-		       COALESCE(i.row_order_ref, 0) as row_order_ref,
-		       COALESCE(CAST(ib.barcode AS TEXT), 'N/A') as matched_barcode,
-		       7 as search_priority
+			COALESCE(CAST(i.name AS TEXT), 'N/A') as name,
+			COALESCE(CAST(i.unit_standard_code AS TEXT), 'N/A') as unit_standard_code,
+			COALESCE(i.item_type, 0) as item_type,
+			COALESCE(i.row_order_ref, 0) as row_order_ref,
+			COALESCE(CAST(ib.barcode AS TEXT), 'N/A') as matched_barcode,
+			COALESCE(CAST(ib.image_url AS TEXT), '') as image_url,   // <== เพิ่มตรงนี้
+			7 as search_priority
 		FROM ic_inventory_barcode ib
 		INNER JOIN ic_inventory i ON CAST(ib.ic_code AS TEXT) = CAST(i.code AS TEXT)
 		WHERE %s
@@ -1256,10 +1265,10 @@ func (s *PostgreSQLService) SearchProductsByLikeBarcode(ctx context.Context, que
 	var icCodes []string
 
 	for rows.Next() {
-		var code, name, unitStandardCode, matchedBarcode string
+		var code, name, unitStandardCode, matchedBarcode, imageURL string
 		var itemType, rowOrderRef, searchPriority int
 
-		err := rows.Scan(&code, &name, &unitStandardCode, &itemType, &rowOrderRef, &matchedBarcode, &searchPriority)
+		err := rows.Scan(&code, &name, &unitStandardCode, &itemType, &rowOrderRef, &matchedBarcode, &imageURL, &searchPriority)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan barcode LIKE search result: %w", err)
 		}
@@ -1294,7 +1303,7 @@ func (s *PostgreSQLService) SearchProductsByLikeBarcode(ctx context.Context, que
 			"balance_qty":        0.0,
 			"unit":               unitStandardCode,
 			"supplier_code":      "N/A",
-			"img_url":            "",
+			"img_url":            imageURL,
 		}
 
 		results = append(results, result)
@@ -1489,6 +1498,7 @@ func (s *PostgreSQLService) SearchProductsSimpleLike(ctx context.Context, query 
 				COALESCE(i.item_type, 0) as item_type,
 				COALESCE(i.row_order_ref, 0) as row_order_ref,
 				COALESCE(CAST(ib.barcode AS TEXT), 'N/A') as matched_barcode,
+				COALESCE(CAST(ib.image_url AS TEXT), '') as image_url,
 				'barcode' as search_source,
 				9 as search_priority
 			FROM ic_inventory_barcode ib
@@ -1548,10 +1558,10 @@ func (s *PostgreSQLService) SearchProductsSimpleLike(ctx context.Context, query 
 	var icCodes []string
 
 	for rows.Next() {
-		var code, name, unitStandardCode, matchedBarcode, searchSource string
+		var code, name, unitStandardCode, matchedBarcode, imageURL, searchSource string
 		var itemType, rowOrderRef, searchPriority int
 
-		err := rows.Scan(&code, &name, &unitStandardCode, &itemType, &rowOrderRef, &matchedBarcode, &searchSource, &searchPriority)
+		err := rows.Scan(&code, &name, &unitStandardCode, &itemType, &rowOrderRef, &matchedBarcode, &imageURL, &searchSource, &searchPriority)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan simple LIKE search result: %w", err)
 		}
@@ -1587,7 +1597,7 @@ func (s *PostgreSQLService) SearchProductsSimpleLike(ctx context.Context, query 
 			"balance_qty":        0.0,
 			"unit":               unitStandardCode,
 			"supplier_code":      "N/A",
-			"img_url":            "",
+			"img_url":            imageURL,
 		}
 
 		results = append(results, result)

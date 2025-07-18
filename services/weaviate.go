@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"time"
 
@@ -79,7 +80,7 @@ func NewWeaviateService(config *config.Config) (*WeaviateService, error) {
 
 // SearchProducts performs vector search using Weaviate BM25
 func (w *WeaviateService) SearchProducts(ctx context.Context, query string, limit int) ([]Product, error) {
-	className := "Product"
+	className := os.Getenv("WEAVIATE_COLLECTION")
 
 	// Use BM25 search since vectorizer is "none"
 	bm25 := w.client.GraphQL().Bm25ArgBuilder().
