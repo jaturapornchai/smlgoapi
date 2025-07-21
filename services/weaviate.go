@@ -1,11 +1,13 @@
 package services
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
-	"strconv"
 	"time"
 
 	"smlgoapi/config"
@@ -27,12 +29,20 @@ type WeaviateService struct {
 	client *weaviate.Client
 }
 
+// EmbeddingRequest and EmbeddingResponse for embedding service
+type EmbeddingRequest struct {
+	Text string `json:"text"`
+}
+type EmbeddingResponse struct {
+	Embedding []float64 `json:"embedding"`
+	Error     string    `json:"error,omitempty"`
+}
+
 // NewWeaviateService creates a new Weaviate service
 func NewWeaviateService(config *config.Config) (*WeaviateService, error) {
 	weaviateURL := config.GetWeaviateURL()
 	scheme := config.GetWeaviateScheme()
 
-	// If URL is empty, use default localhost
 	if weaviateURL == "" {
 		weaviateURL = "localhost:8080"
 		scheme = "http"
@@ -44,9 +54,7 @@ func NewWeaviateService(config *config.Config) (*WeaviateService, error) {
 		Scheme: scheme,
 	}
 
-	// Handle full URL format by extracting host part
 	if weaviateURL != "" && (weaviateURL[:7] == "http://" || weaviateURL[:8] == "https://") {
-		// If URL contains protocol, extract just the host:port part
 		if weaviateURL[:7] == "http://" {
 			cfg.Host = weaviateURL[7:]
 			cfg.Scheme = "http"
@@ -61,14 +69,13 @@ func NewWeaviateService(config *config.Config) (*WeaviateService, error) {
 		return nil, err
 	}
 
-	// Test connection by checking if Weaviate is ready
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	ready, err := client.Misc().ReadyChecker().Do(ctx)
 	if err != nil || !ready {
 		log.Printf("⚠️ Weaviate connection test failed: %v", err)
-		return nil, fmt.Errorf("Weaviate server not reachable at %s://%s", cfg.Scheme, cfg.Host)
+		return nil, fmt.Errorf("weaviate server not reachable at %s://%s", cfg.Scheme, cfg.Host)
 	}
 
 	log.Printf("🔗 Connected to Weaviate at: %s://%s", cfg.Scheme, cfg.Host)
@@ -78,25 +85,69 @@ func NewWeaviateService(config *config.Config) (*WeaviateService, error) {
 	}, nil
 }
 
-// SearchProducts performs vector search using Weaviate BM25
+// getEmbeddingVector calls the embedding service to get a vector for the query
+func getEmbeddingVector(query string) ([]float32, error) {
+	embeddingServiceURL := os.Getenv("EMBEDDING_SERVICE_URL")
+
+	reqBody := EmbeddingRequest{Text: query}
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal embedding request: %v", err)
+	}
+	resp, err := http.Post(embeddingServiceURL+"/embed", "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to call embedding service: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("embedding service returned status %d", resp.StatusCode)
+	}
+	var embeddingResp EmbeddingResponse
+	if err := json.NewDecoder(resp.Body).Decode(&embeddingResp); err != nil {
+		return nil, fmt.Errorf("failed to decode embedding response: %v", err)
+	}
+	if embeddingResp.Error != "" {
+		return nil, fmt.Errorf("embedding service error: %s", embeddingResp.Error)
+	}
+	// Convert []float64 to []float32
+	vector := make([]float32, len(embeddingResp.Embedding))
+	for i, v := range embeddingResp.Embedding {
+		vector[i] = float32(v)
+	}
+	return vector, nil
+}
+
+// SearchProducts performs vector search using Weaviate nearVector (embedding)
 func (w *WeaviateService) SearchProducts(ctx context.Context, query string, limit int) ([]Product, error) {
 	className := os.Getenv("WEAVIATE_COLLECTION")
+	if className == "" {
+		className = "Product"
+	}
 
-	// Use BM25 search since vectorizer is "none"
-	bm25 := w.client.GraphQL().Bm25ArgBuilder().
-		WithQuery(query)
+	// 1. Get embedding vector from embedding service
+	queryVector, err := getEmbeddingVector(query)
+	if err != nil {
+		log.Printf("Embedding service error: %v", err)
+		return nil, err
+	}
+
+	// 2. Use nearVector for semantic search
+	nearVector := w.client.GraphQL().NearVectorArgBuilder().
+		WithVector(queryVector).
+		WithDistance(0.7) // similarity threshold, adjust as needed
 
 	result, err := w.client.GraphQL().Get().
 		WithClassName(className).
 		WithFields(
 			graphql.Field{Name: "barcode"},
 			graphql.Field{Name: "name"},
-			graphql.Field{Name: "icCode"}, // แก้จาก ic_code เป็น icCode ตาม Weaviate schema
+			graphql.Field{Name: "icCode"},
 			graphql.Field{Name: "_additional", Fields: []graphql.Field{
-				{Name: "score"},
+				{Name: "distance"},
+				{Name: "certainty"},
 			}},
 		).
-		WithBM25(bm25).
+		WithNearVector(nearVector).
 		WithLimit(limit).
 		Do(ctx)
 
@@ -119,48 +170,21 @@ func (w *WeaviateService) SearchProducts(ctx context.Context, query string, limi
 						if barcode, ok := product["barcode"].(string); ok {
 							p.Barcode = barcode
 						}
-
 						if name, ok := product["name"].(string); ok {
 							p.Name = name
 						}
-
-						if icCode, ok := product["icCode"].(string); ok { // แก้จาก ic_code เป็น icCode
+						if icCode, ok := product["icCode"].(string); ok {
 							p.ICCode = icCode
 						}
-
-						// Calculate relevance percentage from BM25 score
+						// Convert distance to similarity percentage
 						if additional, ok := product["_additional"].(map[string]interface{}); ok {
-							var score float64
-							var scoreOk bool
-
-							// Handle different numeric types for score
-							switch v := additional["score"].(type) {
-							case float64:
-								score = v
-								scoreOk = true
-							case float32:
-								score = float64(v)
-								scoreOk = true
-							case int:
-								score = float64(v)
-								scoreOk = true
-							case string:
-								if parsed, err := strconv.ParseFloat(v, 64); err == nil {
-									score = parsed
-									scoreOk = true
-								}
-							}
-
-							if scoreOk {
-								// BM25 score can be any positive number, convert to percentage
-								// Scale to more reasonable percentages
-								p.Relevance = score * 10.0
-								if p.Relevance > 100.0 {
-									p.Relevance = 100.0
+							if distance, ok := additional["distance"].(float64); ok {
+								p.Relevance = (1.0 - distance) * 100.0
+								if p.Relevance < 0 {
+									p.Relevance = 0
 								}
 							}
 						}
-
 						products = append(products, p)
 					}
 				}

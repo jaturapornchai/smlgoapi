@@ -854,12 +854,11 @@ func (h *APIHandler) FindByZipCode(c *gin.Context) {
 // @Param search body models.SearchParameters true "Search parameters"
 // @Success 200 {object} models.APIResponse
 // @Router /search-by-vector [post]
+
 func (h *APIHandler) SearchProductsByVector(c *gin.Context) {
 	startTime := time.Now()
 
 	var params models.SearchParameters
-
-	// Only support POST requests - parse JSON body
 	if err := c.ShouldBindJSON(&params); err != nil {
 		c.JSON(http.StatusBadRequest, models.APIResponse{
 			Success: false,
@@ -868,9 +867,6 @@ func (h *APIHandler) SearchProductsByVector(c *gin.Context) {
 		return
 	}
 
-	log.Printf("🔍 [VECTOR-SEARCH] Parsed parameters: query='%s', limit=%d, offset=%d", params.Query, params.Limit, params.Offset)
-
-	// Validate query
 	if params.Query == "" {
 		c.JSON(http.StatusBadRequest, models.APIResponse{
 			Success: false,
@@ -880,250 +876,90 @@ func (h *APIHandler) SearchProductsByVector(c *gin.Context) {
 	}
 
 	query := params.Query
-
-	// AI Enhancement for Vector Search - DISABLED FOR SPEED TESTING
-	// enhancedQuery, err := h.enhanceQueryForVectorSearch(query)
-	// if err != nil {
-	// 	log.Printf("⚠️ [VECTOR-SEARCH] DeepSeek enhancement failed, using original query: %v", err)
-	// 	enhancedQuery = query // ใช้คำค้นหาเดิม
-	// }
-
-	// ใช้ original query โดยตรงเพื่อการทดสอบความเร็ว
-	searchQuery := query
-	log.Printf("🔍 [VECTOR-SEARCH] Using original query directly (AI enhancement disabled): '%s'", searchQuery)
-
-	// Set default values
 	limit := params.Limit
 	if limit <= 0 {
-		limit = 50 // Increased default limit
+		limit = 50
 	}
-	if limit > 500 {
-		limit = 500 // Increased max limit
+	if limit > 200 {
+		limit = 200
 	}
-
 	offset := params.Offset
 	if offset < 0 {
 		offset = 0
 	}
 
-	// Enhanced logging
-	fmt.Printf("\n🚀 [VECTOR-SEARCH] === STARTING SEARCH ===\n")
-	fmt.Printf("   📝 Query: '%s'\n", query)
-	fmt.Printf("   📊 Limit: %d, Offset: %d\n", limit, offset)
-	fmt.Printf("   � AI Enhancement: DISABLED\n")
-	fmt.Printf("   =====================================\n")
 	ctx := c.Request.Context()
 
-	// Special logic for offset=0: Priority search in barcode and code fields first
-	var priorityResults []map[string]interface{}
-	var totalPriorityCount int
-	var remainingLimit = limit
-
-	if offset == 0 {
-		log.Printf("🎯 [PRIORITY-SEARCH] offset=0 detected, implementing priority search logic")
-
-		// Step 1: Search in ic_inventory_barcode.barcode first
-		log.Printf("🔍 [PRIORITY-SEARCH] Step 1: Searching in ic_inventory_barcode.barcode for '%s'", query)
-		barcodeResults, barcodeCount, err := h.postgreSQLService.SearchProductsByExactBarcode(ctx, query, limit, 0)
-		if err != nil {
-			log.Printf("⚠️ [PRIORITY-SEARCH] Barcode search failed: %v", err)
-		} else if barcodeCount > 0 {
-			log.Printf("✅ [PRIORITY-SEARCH] Found %d results in barcode search", barcodeCount)
-			priorityResults = append(priorityResults, barcodeResults...)
-			totalPriorityCount += barcodeCount
-			remainingLimit -= len(barcodeResults)
-			if remainingLimit <= 0 {
-				remainingLimit = 0
-			}
-		} else {
-			log.Printf("ℹ️ [PRIORITY-SEARCH] No results found in barcode search")
-		}
-
-		// Step 2: If no barcode results or still have remaining limit, search in ic_inventory.code
-		if remainingLimit > 0 {
-			log.Printf("🔍 [PRIORITY-SEARCH] Step 2: Searching in ic_inventory.code for '%s' (remaining limit: %d)", query, remainingLimit)
-			codeResults, codeCount, err := h.postgreSQLService.SearchProductsByExactCode(ctx, query, remainingLimit, 0)
-			if err != nil {
-				log.Printf("⚠️ [PRIORITY-SEARCH] Code search failed: %v", err)
-			} else if codeCount > 0 {
-				log.Printf("✅ [PRIORITY-SEARCH] Found %d results in code search", codeCount)
-				priorityResults = append(priorityResults, codeResults...)
-				totalPriorityCount += codeCount
-				remainingLimit -= len(codeResults)
-				if remainingLimit <= 0 {
-					remainingLimit = 0
-				}
-			} else {
-				log.Printf("ℹ️ [PRIORITY-SEARCH] No results found in code search")
-			}
-		}
-
-		// Step 3: If no exact matches found and still have remaining limit, try simple LIKE search
-		if len(priorityResults) == 0 && remainingLimit > 0 {
-			log.Printf("🔍 [PRIORITY-SEARCH] Step 3: No exact matches found, trying LIKE searches")
-
-			// Step 3: Try simple LIKE search in both barcode and code fields
-			log.Printf("🔍 [PRIORITY-SEARCH] Step 3: Simple LIKE searching for '%s'", searchQuery)
-			simpleLikeResults, simpleLikeCount, err := h.postgreSQLService.SearchProductsSimpleLike(ctx, searchQuery, remainingLimit, 0)
-			if err != nil {
-				log.Printf("⚠️ [PRIORITY-SEARCH] Simple LIKE search failed: %v", err)
-			} else if simpleLikeCount > 0 {
-				log.Printf("✅ [PRIORITY-SEARCH] Found %d results in simple LIKE search", simpleLikeCount)
-				priorityResults = append(priorityResults, simpleLikeResults...)
-				totalPriorityCount += simpleLikeCount
-				remainingLimit -= len(simpleLikeResults)
-				if remainingLimit <= 0 {
-					remainingLimit = 0
-				}
-			} else {
-				log.Printf("ℹ️ [PRIORITY-SEARCH] No results found in simple LIKE search")
-			}
-		}
-
-		log.Printf("🎯 [PRIORITY-SEARCH] Priority search completed: %d total results, remaining limit: %d", len(priorityResults), remainingLimit)
-
-		// If we have enough results from priority search, return them
-		if len(priorityResults) >= limit {
-			log.Printf("🎉 [PRIORITY-SEARCH] Priority search satisfied the limit, returning %d results", len(priorityResults))
-
-			// Convert to expected format
+	// 1. Exact match by barcode
+	if h.postgreSQLService != nil {
+		barcodeResults, total, err := h.postgreSQLService.SearchProductsByExactBarcode(ctx, query, limit, offset)
+		if err == nil && total > 0 {
 			var convertedResults []services.SearchResult
-			for _, result := range priorityResults[:limit] {
-				convertedResult := services.SearchResult{
-					ID:               getStringValue(result, "id"),
-					Code:             getStringValue(result, "code"),
-					Name:             getStringValue(result, "name"),
-					Price:            getFloat64Value(result, "price"),
-					Unit:             getStringValue(result, "unit"),
-					SupplierCode:     getStringValue(result, "supplier_code"),
-					ImgURL:           getStringValue(result, "img_url"),
-					SimilarityScore:  getFloat64Value(result, "similarity_score"),
-					SalePrice:        getFloat64Value(result, "sale_price"),
-					PremiumWord:      getStringValue(result, "premium_word"),
-					DiscountPrice:    getFloat64Value(result, "discount_price"),
-					DiscountPercent:  getFloat64Value(result, "discount_percent"),
-					FinalPrice:       getFloat64Value(result, "final_price"),
-					SoldQty:          getFloat64Value(result, "sold_qty"),
-					MultiPacking:     int(getFloat64Value(result, "multi_packing")),
-					MultiPackingName: getStringValue(result, "multi_packing_name"),
-					Barcodes:         getStringValue(result, "barcodes"),
-					QtyAvailable:     getFloat64Value(result, "qty_available"),
-					BalanceQty:       getFloat64Value(result, "balance_qty"),
-					SearchPriority:   int(getFloat64Value(result, "search_priority")),
-				}
-				convertedResults = append(convertedResults, convertedResult)
+			for _, result := range barcodeResults {
+				convertedResults = append(convertedResults, services.SearchResult{
+					Code:            getStringValue(result, "code"),
+					Name:            getStringValue(result, "name"),
+					Barcode:         getStringValue(result, "barcode"),
+					ImgURL:          getStringValue(result, "img_url"),
+					SimilarityScore: getFloat64Value(result, "similarity_score"),
+					// เพิ่ม field อื่นๆ ตามที่ SearchResult รองรับ
+				})
 			}
-
 			results := &services.VectorSearchResponse{
 				Data:       convertedResults,
-				TotalCount: totalPriorityCount,
-				Query:      searchQuery + " (priority search: exact barcode + exact code + like barcode + like code)",
+				TotalCount: total,
+				Query:      query,
 				Duration:   time.Since(startTime).Seconds() * 1000,
 			}
-
 			c.JSON(http.StatusOK, models.APIResponse{
 				Success: true,
 				Data:    results,
-				Message: "Priority search completed successfully (exact/like match in barcode + code)",
+				Message: "Found by barcode",
 			})
 			return
 		}
 	}
 
-	// Step 1: Search Weaviate vector database first to get IC codes and barcodes
-	if h.weaviateService == nil {
-		// Fallback to regular search when Weaviate is not available
-		log.Printf("⚠️ [VECTOR-SEARCH] Weaviate service not available, falling back to regular search")
-
-		// For offset=0, we may already have priority results
-		var searchResults []map[string]interface{}
-		var totalCount int
-
-		if offset == 0 && len(priorityResults) > 0 {
-			// We have priority results, now get normal search results to fill remaining limit
-			if remainingLimit > 0 {
-				log.Printf("🔍 [VECTOR-SEARCH] Getting additional regular search results (remaining limit: %d)", remainingLimit)
-				normalResults, normalCount, err := h.postgreSQLService.SearchProducts(ctx, searchQuery, remainingLimit, 0)
-				if err != nil {
-					log.Printf("❌ [VECTOR-SEARCH] PostgreSQL regular search failed: %v", err)
-				} else {
-					// Combine priority results with normal results
-					searchResults = append(priorityResults, normalResults...)
-					totalCount = totalPriorityCount + normalCount
-					log.Printf("🎯 [VECTOR-SEARCH] Combined results: %d priority + %d normal = %d total", len(priorityResults), len(normalResults), len(searchResults))
-				}
-			} else {
-				// Use only priority results
-				searchResults = priorityResults
-				totalCount = totalPriorityCount
-				log.Printf("🎯 [VECTOR-SEARCH] Using only priority results: %d total", totalCount)
-			}
-		} else {
-			// No priority results or offset > 0, use regular search
-			regularResults, regularCount, err := h.postgreSQLService.SearchProducts(ctx, searchQuery, limit, offset)
-			if err != nil {
-				log.Printf("❌ [VECTOR-SEARCH] PostgreSQL fallback search failed: %v", err)
-				c.JSON(http.StatusInternalServerError, models.APIResponse{
-					Success: false,
-					Message: "Search failed: " + err.Error(),
+	// 2. Exact match by ic_code
+	if h.postgreSQLService != nil {
+		icCodeResults, total, err := h.postgreSQLService.SearchProductsByExactCode(ctx, query, limit, offset)
+		if err == nil && total > 0 {
+			var convertedResults []services.SearchResult
+			for _, result := range icCodeResults {
+				convertedResults = append(convertedResults, services.SearchResult{
+					Code:            getStringValue(result, "code"),
+					Name:            getStringValue(result, "name"),
+					Barcode:         getStringValue(result, "barcode"),
+					ImgURL:          getStringValue(result, "img_url"),
+					SimilarityScore: getFloat64Value(result, "similarity_score"),
+					// เพิ่ม field อื่นๆ ตามที่ SearchResult รองรับ
 				})
-				return
 			}
-			searchResults = regularResults
-			totalCount = regularCount
-		}
-
-		// Convert PostgreSQL results to the expected format
-		var convertedResults []services.SearchResult
-		for _, result := range searchResults {
-			convertedResult := services.SearchResult{
-				ID:               getStringValue(result, "id"),
-				Code:             getStringValue(result, "code"),
-				Name:             getStringValue(result, "name"),
-				Price:            getFloat64Value(result, "price"),
-				Unit:             getStringValue(result, "unit"),
-				SupplierCode:     getStringValue(result, "supplier_code"),
-				ImgURL:           getStringValue(result, "img_url"),
-				SimilarityScore:  getFloat64Value(result, "similarity_score"),
-				SalePrice:        getFloat64Value(result, "sale_price"),
-				PremiumWord:      getStringValue(result, "premium_word"),
-				DiscountPrice:    getFloat64Value(result, "discount_price"),
-				DiscountPercent:  getFloat64Value(result, "discount_percent"),
-				FinalPrice:       getFloat64Value(result, "final_price"),
-				SoldQty:          getFloat64Value(result, "sold_qty"),
-				MultiPacking:     int(getFloat64Value(result, "multi_packing")),
-				MultiPackingName: getStringValue(result, "multi_packing_name"),
-				Barcodes:         getStringValue(result, "barcodes"),
-				QtyAvailable:     getFloat64Value(result, "qty_available"),
-				BalanceQty:       getFloat64Value(result, "balance_qty"),
-				SearchPriority:   int(getFloat64Value(result, "search_priority")),
+			results := &services.VectorSearchResponse{
+				Data:       convertedResults,
+				TotalCount: total,
+				Query:      query,
+				Duration:   time.Since(startTime).Seconds() * 1000,
 			}
-			convertedResults = append(convertedResults, convertedResult)
+			c.JSON(http.StatusOK, models.APIResponse{
+				Success: true,
+				Data:    results,
+				Message: "Found by ic_code",
+			})
+			return
 		}
+	}
 
-		// Create response in the expected format
-		results := &services.VectorSearchResponse{
-			Data:       convertedResults,
-			TotalCount: totalCount,
-			Query:      searchQuery + " (fallback to regular search)",
-			Duration:   time.Since(startTime).Seconds() * 1000,
-		}
-
-		c.JSON(http.StatusOK, models.APIResponse{
-			Success: true,
-			Data:    results,
-			Message: "Search completed successfully using fallback method (Weaviate unavailable)",
+	// 3. Vector search (Weaviate)
+	if h.weaviateService == nil {
+		c.JSON(http.StatusServiceUnavailable, models.APIResponse{
+			Success: false,
+			Message: "Vector search service unavailable",
 		})
 		return
 	}
 
-	// Search vector database with higher limit to get more barcodes for better matching
-	vectorLimit := limit * 3 // Get more results from vector DB to compensate for potential mismatches
-	if vectorLimit > 300 {
-		vectorLimit = 300
-	}
-
-	vectorProducts, err := h.weaviateService.SearchProducts(ctx, searchQuery, vectorLimit)
+	vectorProducts, err := h.weaviateService.SearchProducts(ctx, query, limit)
 	if err != nil {
 		log.Printf("❌ [VECTOR-SEARCH] Weaviate vector search failed: %v", err)
 		c.JSON(http.StatusInternalServerError, models.APIResponse{
@@ -1133,325 +969,66 @@ func (h *APIHandler) SearchProductsByVector(c *gin.Context) {
 		return
 	}
 
-	log.Printf("🎲 [VECTOR-SEARCH] Weaviate returned %d products from vector database", len(vectorProducts))
-
-	// If vector search finds many results and user didn't specify a limit, increase the limit
-	if len(vectorProducts) > limit && params.Limit <= 0 {
-		originalLimit := limit
-		limit = len(vectorProducts)
-		if limit > 200 { // Cap at reasonable maximum
-			limit = 200
-		}
-		log.Printf("🔼 [VECTOR-SEARCH] Auto-increasing limit from %d to %d due to many vector matches", originalLimit, limit)
-	}
-
 	if len(vectorProducts) == 0 {
-		log.Printf("ℹ️ [VECTOR-SEARCH] No products found in Weaviate vector database")
-		// Return empty results instead of error
-		results := &services.VectorSearchResponse{
-			Data:       []services.SearchResult{},
-			TotalCount: 0,
-			Query:      query,
-			Duration:   time.Since(startTime).Seconds() * 1000,
-		}
-
 		c.JSON(http.StatusOK, models.APIResponse{
 			Success: true,
-			Data:    results,
+			Data:    []services.SearchResult{},
 			Message: "No products found matching the query",
 		})
 		return
-	} // Step 2: Extract IC codes from vector search results (preferred) or fallback to barcodes
-	icCodes, relevanceMap := h.weaviateService.GetICCodesWithRelevance(vectorProducts)
+	}
 
+	icCodes, relevanceMap := h.weaviateService.GetICCodesWithRelevance(vectorProducts)
 	var searchResults []map[string]interface{}
 	var totalCount int
-	var searchMethod string
 
-	if len(icCodes) > 0 {
-		searchMethod = "IC Code"
-		log.Printf("🎯 [VECTOR-SEARCH] Extracting IC codes from Weaviate: %d codes found", len(icCodes))
-
-		// Get barcode mapping for IC codes
+	if len(icCodes) > 0 && h.postgreSQLService != nil {
 		barcodeMapping := h.weaviateService.GetICCodeToBarcodeMap(vectorProducts)
-
-		// For offset=0, we may already have priority results
-		if offset == 0 && len(priorityResults) > 0 {
-			log.Printf("🎯 [VECTOR-SEARCH] Combining priority results with vector search (remaining limit: %d)", remainingLimit)
-			if remainingLimit > 0 {
-				// Get vector search results for remaining limit
-				vectorResults, vectorCount, err := h.postgreSQLService.SearchProductsByBarcodesWithRelevanceAndBarcodeMap(ctx, icCodes, relevanceMap, barcodeMapping, remainingLimit, 0)
-				if err != nil {
-					log.Printf("❌ [VECTOR-SEARCH] PostgreSQL search by IC codes failed: %v", err)
-					c.JSON(http.StatusInternalServerError, models.APIResponse{
-						Success: false,
-						Message: "Database search failed: " + err.Error(),
-					})
-					return
-				}
-				// Combine priority results with vector results
-				searchResults = append(priorityResults, vectorResults...)
-				totalCount = totalPriorityCount + vectorCount
-				log.Printf("🎯 [VECTOR-SEARCH] Combined results: %d priority + %d vector = %d total", len(priorityResults), len(vectorResults), len(searchResults))
-			} else {
-				// Use only priority results
-				searchResults = priorityResults
-				totalCount = totalPriorityCount
-				log.Printf("🎯 [VECTOR-SEARCH] Using only priority results: %d total", totalCount)
-			}
-		} else {
-			// Step 3: Search PostgreSQL using the IC codes with relevance scores and barcode mapping (normal flow)
-			searchResults, totalCount, err = h.postgreSQLService.SearchProductsByBarcodesWithRelevanceAndBarcodeMap(ctx, icCodes, relevanceMap, barcodeMapping, limit, offset)
-			if err != nil {
-				log.Printf("❌ [VECTOR-SEARCH] PostgreSQL search by IC codes failed: %v", err)
-				c.JSON(http.StatusInternalServerError, models.APIResponse{
-					Success: false,
-					Message: "Database search failed: " + err.Error(),
-				})
-				return
-			}
-		}
-
-		if len(searchResults) > 0 {
-			log.Printf("✅ [VECTOR-SEARCH] Found %d products using IC codes", len(searchResults))
-		} else {
-			log.Printf("⚠️ [VECTOR-SEARCH] No products found with IC codes, trying barcodes as fallback...")
-			// Fallback to barcode search
-			barcodes, barcodeRelevanceMap := h.weaviateService.GetBarcodesWithRelevance(vectorProducts)
-			if len(barcodes) > 0 {
-				searchMethod = "Barcode (Fallback)"
-				log.Printf("🔄 [VECTOR-SEARCH] Fallback: extracting barcodes: %d codes found", len(barcodes))
-
-				// Get barcode mapping for barcodes
-				barcodeMappingFallback := h.weaviateService.GetBarcodeToBarcodeMap(vectorProducts)
-
-				// For offset=0, we may already have priority results
-				if offset == 0 && len(priorityResults) > 0 {
-					log.Printf("🎯 [VECTOR-SEARCH] Combining priority results with barcode fallback (remaining limit: %d)", remainingLimit)
-					if remainingLimit > 0 {
-						// Get barcode fallback results for remaining limit
-						barcodeResults, barcodeCount, err := h.postgreSQLService.SearchProductsByBarcodesWithRelevanceAndBarcodeMap(ctx, barcodes, barcodeRelevanceMap, barcodeMappingFallback, remainingLimit, 0)
-						if err != nil {
-							log.Printf("❌ [VECTOR-SEARCH] PostgreSQL fallback search by barcodes failed: %v", err)
-							c.JSON(http.StatusInternalServerError, models.APIResponse{
-								Success: false,
-								Message: "Database search failed: " + err.Error(),
-							})
-							return
-						}
-						// Combine priority results with barcode results
-						searchResults = append(priorityResults, barcodeResults...)
-						totalCount = totalPriorityCount + barcodeCount
-						log.Printf("🎯 [VECTOR-SEARCH] Combined results: %d priority + %d barcode = %d total", len(priorityResults), len(barcodeResults), len(searchResults))
-					} else {
-						// Use only priority results
-						searchResults = priorityResults
-						totalCount = totalPriorityCount
-						log.Printf("🎯 [VECTOR-SEARCH] Using only priority results: %d total", totalCount)
-					}
-				} else {
-					// Step 3: Search PostgreSQL using the barcodes with relevance scores and barcode mapping (normal flow)
-					searchResults, totalCount, err = h.postgreSQLService.SearchProductsByBarcodesWithRelevanceAndBarcodeMap(ctx, barcodes, barcodeRelevanceMap, barcodeMappingFallback, limit, offset)
-					if err != nil {
-						log.Printf("❌ [VECTOR-SEARCH] PostgreSQL fallback search by barcodes failed: %v", err)
-						c.JSON(http.StatusInternalServerError, models.APIResponse{
-							Success: false,
-							Message: "Database search failed: " + err.Error(),
-						})
-						return
-					}
-				}
-
-				if len(searchResults) > 0 {
-					log.Printf("✅ [VECTOR-SEARCH] Found %d products using barcode fallback", len(searchResults))
-				}
-			}
+		searchResults, totalCount, err = h.postgreSQLService.SearchProductsByBarcodesWithRelevanceAndBarcodeMap(ctx, icCodes, relevanceMap, barcodeMapping, limit, offset)
+		if err != nil {
+			log.Printf("❌ [VECTOR-SEARCH] PostgreSQL search by IC codes failed: %v", err)
+			c.JSON(http.StatusInternalServerError, models.APIResponse{
+				Success: false,
+				Message: "Database search failed: " + err.Error(),
+			})
+			return
 		}
 	} else {
-		// No IC codes available, use barcodes
-		barcodes, barcodeRelevanceMap := h.weaviateService.GetBarcodesWithRelevance(vectorProducts)
-		searchMethod = "Barcode (Primary)"
-		log.Printf("🎯 [VECTOR-SEARCH] No IC codes available, extracting barcodes: %d codes found", len(barcodes))
-
-		// Get barcode mapping for barcodes
-		barcodeMappingPrimary := h.weaviateService.GetBarcodeToBarcodeMap(vectorProducts)
-
-		// For offset=0, we may already have priority results
-		if offset == 0 && len(priorityResults) > 0 {
-			log.Printf("🎯 [VECTOR-SEARCH] Combining priority results with primary barcode search (remaining limit: %d)", remainingLimit)
-			if remainingLimit > 0 {
-				// Get primary barcode results for remaining limit
-				primaryBarcodeResults, primaryBarcodeCount, err := h.postgreSQLService.SearchProductsByBarcodesWithRelevanceAndBarcodeMap(ctx, barcodes, barcodeRelevanceMap, barcodeMappingPrimary, remainingLimit, 0)
-				if err != nil {
-					log.Printf("❌ [VECTOR-SEARCH] PostgreSQL search by barcodes failed: %v", err)
-					c.JSON(http.StatusInternalServerError, models.APIResponse{
-						Success: false,
-						Message: "Database search failed: " + err.Error(),
-					})
-					return
-				}
-				// Combine priority results with primary barcode results
-				searchResults = append(priorityResults, primaryBarcodeResults...)
-				totalCount = totalPriorityCount + primaryBarcodeCount
-				log.Printf("🎯 [VECTOR-SEARCH] Combined results: %d priority + %d primary barcode = %d total", len(priorityResults), len(primaryBarcodeResults), len(searchResults))
-			} else {
-				// Use only priority results
-				searchResults = priorityResults
-				totalCount = totalPriorityCount
-				log.Printf("🎯 [VECTOR-SEARCH] Using only priority results: %d total", totalCount)
+		for _, v := range vectorProducts {
+			result := services.SearchResult{
+				Code:            v.ICCode,
+				Name:            v.Name,
+				Barcode:         v.Barcode,
+				SimilarityScore: v.Relevance,
 			}
-		} else {
-			// Step 3: Search PostgreSQL using the barcodes with relevance scores and barcode mapping (normal flow)
-			searchResults, totalCount, err = h.postgreSQLService.SearchProductsByBarcodesWithRelevanceAndBarcodeMap(ctx, barcodes, barcodeRelevanceMap, barcodeMappingPrimary, limit, offset)
-			if err != nil {
-				log.Printf("❌ [VECTOR-SEARCH] PostgreSQL search by barcodes failed: %v", err)
-				c.JSON(http.StatusInternalServerError, models.APIResponse{
-					Success: false,
-					Message: "Database search failed: " + err.Error(),
-				})
-				return
-			}
+			searchResults = append(searchResults, map[string]interface{}{
+				"code":             result.Code,
+				"name":             result.Name,
+				"barcode":          result.Barcode,
+				"similarity_score": result.SimilarityScore,
+			})
 		}
-
-		if len(searchResults) > 0 {
-			log.Printf("✅ [VECTOR-SEARCH] Found %d products using barcodes", len(searchResults))
-		}
+		totalCount = len(searchResults)
 	}
 
-	// If user requested more results than what vector database returned, supplement with PostgreSQL results
-	if len(searchResults) < limit && len(vectorProducts) < limit {
-		log.Printf("🔍 [SUPPLEMENT-SEARCH] User requested %d results, but vector DB only returned %d. Supplementing with PostgreSQL results...", limit, len(vectorProducts))
-
-		// Calculate how many additional results we need
-		additionalNeeded := limit - len(searchResults)
-
-		// Get additional results from PostgreSQL general search (excluding already found results)
-		additionalResults, _, err := h.postgreSQLService.SearchProducts(ctx, searchQuery, additionalNeeded*2, len(searchResults)) // Get more to account for potential duplicates
-		if err != nil {
-			log.Printf("⚠️ [SUPPLEMENT-SEARCH] Failed to get additional PostgreSQL results: %v", err)
-		} else if len(additionalResults) > 0 {
-			log.Printf("✅ [SUPPLEMENT-SEARCH] Found %d additional results from PostgreSQL", len(additionalResults))
-
-			// Create a map of existing codes to avoid duplicates
-			existingCodes := make(map[string]bool)
-			for _, result := range searchResults {
-				if code, ok := result["code"]; ok {
-					if codeStr, ok := code.(string); ok {
-						existingCodes[codeStr] = true
-					}
-				}
-			}
-
-			// Add non-duplicate results
-			addedCount := 0
-			for _, additionalResult := range additionalResults {
-				if addedCount >= additionalNeeded {
-					break
-				}
-
-				if code, ok := additionalResult["code"]; ok {
-					if codeStr, ok := code.(string); ok {
-						if !existingCodes[codeStr] {
-							// Add with lower relevance score to indicate it's supplemental
-							additionalResult["similarity_score"] = 25.0 // Lower than vector results
-							additionalResult["search_priority"] = 7     // Lower priority than vector results
-							searchResults = append(searchResults, additionalResult)
-							existingCodes[codeStr] = true
-							addedCount++
-						}
-					}
-				}
-			}
-
-			if addedCount > 0 {
-				log.Printf("🎯 [SUPPLEMENT-SEARCH] Added %d unique supplemental results (total now: %d)", addedCount, len(searchResults))
-				// Update total count to reflect combined results
-				totalCount = len(searchResults)
-			}
-		}
-	}
-
-	// Convert PostgreSQL results to the expected format
 	var convertedResults []services.SearchResult
 	for _, result := range searchResults {
-		convertedResult := services.SearchResult{
-			ID:               getStringValue(result, "id"),
-			Code:             getStringValue(result, "code"),
-			Name:             getStringValue(result, "name"),
-			Price:            getFloat64Value(result, "price"),
-			Unit:             getStringValue(result, "unit"),
-			SupplierCode:     getStringValue(result, "supplier_code"),
-			ImgURL:           getStringValue(result, "img_url"),
-			SimilarityScore:  getFloat64Value(result, "similarity_score"),
-			SalePrice:        getFloat64Value(result, "sale_price"),
-			PremiumWord:      getStringValue(result, "premium_word"),
-			DiscountPrice:    getFloat64Value(result, "discount_price"),
-			DiscountPercent:  getFloat64Value(result, "discount_percent"),
-			FinalPrice:       getFloat64Value(result, "final_price"),
-			SoldQty:          getFloat64Value(result, "sold_qty"),
-			MultiPacking:     int(getFloat64Value(result, "multi_packing")),
-			MultiPackingName: getStringValue(result, "multi_packing_name"),
-			Barcodes:         getStringValue(result, "barcodes"),
-			Barcode:          getStringValue(result, "barcode"), // Add the barcode field from Weaviate
-			QtyAvailable:     getFloat64Value(result, "qty_available"),
-			BalanceQty:       getFloat64Value(result, "balance_qty"),
-			SearchPriority:   int(getFloat64Value(result, "search_priority")),
-		}
-		convertedResults = append(convertedResults, convertedResult)
+		convertedResults = append(convertedResults, services.SearchResult{
+			Code:            getStringValue(result, "code"),
+			Name:            getStringValue(result, "name"),
+			Barcode:         getStringValue(result, "barcode"),
+			ImgURL:          getStringValue(result, "img_url"),
+			SimilarityScore: getFloat64Value(result, "similarity_score"),
+		})
 	}
 
-	// Create response in the expected format
 	results := &services.VectorSearchResponse{
 		Data:       convertedResults,
 		TotalCount: totalCount,
-		Query:      searchQuery,
+		Query:      query,
 		Duration:   time.Since(startTime).Seconds() * 1000,
 	}
-	duration := time.Since(startTime).Seconds() * 1000
 
-	// Get total available products count from regular PostgreSQL search for better reporting
-	var totalAvailableInPostgreSQL int
-	if h.postgreSQLService != nil {
-		_, totalAvailableInPostgreSQL, err = h.postgreSQLService.SearchProducts(ctx, searchQuery, 1, 0)
-		if err != nil {
-			log.Printf("⚠️ [VECTOR-SEARCH] Failed to get total count from PostgreSQL: %v", err)
-			totalAvailableInPostgreSQL = results.TotalCount // fallback to current count
-		}
-	} else {
-		totalAvailableInPostgreSQL = results.TotalCount
-	}
-
-	// Enhanced search results logging
-	fmt.Printf("\n🎯 [VECTOR-SEARCH] === SEARCH RESULTS SUMMARY ===\n")
-	fmt.Printf("   📝 Query: '%s'\n", query)
-	fmt.Printf("   🚫 AI Enhancement: DISABLED\n")
-	fmt.Printf("   🔗 Search Method: %s\n", searchMethod)
-	fmt.Printf("   🎲 Vector Database: %d products found\n", len(vectorProducts))
-	fmt.Printf("   📊 Vector-Matched Products: %d records (from %d vector results)\n", results.TotalCount, len(vectorProducts))
-	fmt.Printf("   📚 Total PostgreSQL Available: %d records (all matching products)\n", totalAvailableInPostgreSQL)
-	fmt.Printf("   📋 Returned Results: %d products (limit: %d)\n", len(results.Data), limit)
-	fmt.Printf("   📄 Page Info: page %d (offset: %d, limit: %d)\n", (offset/limit)+1, offset, limit)
-	fmt.Printf("   ⏱️  Processing Time: %.1fms\n", duration)
-	if len(results.Data) > 0 {
-		fmt.Printf("   🏆 Top Results:\n")
-		for i, product := range results.Data {
-			if i >= 3 {
-				break
-			}
-			fmt.Printf("     %d. [%s] %s (Relevance: %.1f%%)\n", i+1, product.Code, product.Name, product.SimilarityScore)
-		}
-		if len(results.Data) < totalAvailableInPostgreSQL {
-			fmt.Printf("   📄 ... and %d more results available in PostgreSQL\n", totalAvailableInPostgreSQL-len(results.Data))
-		}
-		if len(results.Data) < results.TotalCount {
-			fmt.Printf("   📄 ... and %d more vector-matched results available\n", results.TotalCount-len(results.Data))
-		}
-	} else {
-		fmt.Printf("   ❌ No results found\n")
-	}
-
-	fmt.Printf("   ===============================\n")
-	fmt.Printf("✅ [VECTOR-SEARCH] COMPLETED (%.1fms)\n\n", duration)
 	c.JSON(http.StatusOK, models.APIResponse{
 		Success: true,
 		Data:    results,
