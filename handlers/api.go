@@ -902,6 +902,7 @@ func (h *APIHandler) SearchProductsByVector(c *gin.Context) {
 					Barcode:         getStringValue(result, "barcode"),
 					ImgURL:          getStringValue(result, "img_url"),
 					SimilarityScore: getFloat64Value(result, "similarity_score"),
+					Unit:            getStringValue(result, "unit"),
 					// เพิ่ม field อื่นๆ ตามที่ SearchResult รองรับ
 				})
 			}
@@ -932,6 +933,7 @@ func (h *APIHandler) SearchProductsByVector(c *gin.Context) {
 					Barcode:         getStringValue(result, "barcode"),
 					ImgURL:          getStringValue(result, "img_url"),
 					SimilarityScore: getFloat64Value(result, "similarity_score"),
+					Unit:            getStringValue(result, "unit"),
 					// เพิ่ม field อื่นๆ ตามที่ SearchResult รองรับ
 				})
 			}
@@ -1019,6 +1021,7 @@ func (h *APIHandler) SearchProductsByVector(c *gin.Context) {
 			Barcode:         getStringValue(result, "barcode"),
 			ImgURL:          getStringValue(result, "img_url"),
 			SimilarityScore: getFloat64Value(result, "similarity_score"),
+			Unit:            getStringValue(result, "unit"),
 		})
 	}
 
