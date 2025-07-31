@@ -104,7 +104,7 @@ curl http://localhost:8008/guide
 5. **Deploy ไปยัง Production Server**
    ```bash
    # เชื่อมต่อไปยัง production server
-   ssh root@143.198.192.64
+   ssh root@103.13.30.32
    
    # เข้าไปยังโฟลเดอร์โปรเจค
    cd /data/smlgoapi/
@@ -122,22 +122,22 @@ curl http://localhost:8008/guide
 
 1. **ตรวจสอบการเชื่อมต่อ SSH**
    ```bash
-   ssh root@143.198.192.64 "docker --version"
+   ssh root@103.13.30.32 "docker --version"
    ```
 
 2. **ตรวจสอบสถานะ containers**
    ```bash
-   ssh root@143.198.192.64 "cd /data/vectorapi-dev/ && docker compose ps"
+   ssh root@103.13.30.32 "cd /data/vectorapi-dev/ && docker compose ps"
    ```
 
 3. **ดู logs การทำงาน**
    ```bash
-   ssh root@143.198.192.64 "cd /data/vectorapi-dev/ && docker compose logs -f"
+   ssh root@103.13.30.32 "cd /data/vectorapi-dev/ && docker compose logs -f"
    ```
 
 4. **Restart services (หากจำเป็น)**
    ```bash
-   ssh root@143.198.192.64 "cd /data/vectorapi-dev/ && docker compose restart"
+   ssh root@103.13.30.32 "cd /data/vectorapi-dev/ && docker compose restart"
    ```
 
 ### 📦 Deploy Command Summary
@@ -149,7 +149,7 @@ git commit -m "Update features"
 git push
 
 # Production: Deploy to server
-ssh root@143.198.192.64
+ssh root@103.13.30.32
 cd /data/vectorapi-dev/
 docker pull ghcr.io/smlsoft/vectordbapi:main
 docker compose up -d
@@ -486,7 +486,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class SMLGOApiService {
-  static const String baseUrl = 'http://localhost:8080'; // เปลี่ยนเป็น IP ของเซิร์ฟเวอร์
+  static const String baseUrl = 'http://103.13.30.32:8008'; // เปลี่ยนเป็น IP ของเซิร์ฟเวอร์
   
   // Health Check
   static Future<Map<String, dynamic>?> checkHealth() async {
@@ -1294,7 +1294,7 @@ make deploy
 
 ```bash
 # SSH เข้า server
-ssh root@143.198.192.64
+ssh root@103.13.30.32
 
 # ไปยัง directory ที่ต้องการ
 cd /data/vectorapi-dev/
