@@ -20,7 +20,7 @@ func RootHandler(c *gin.Context) {
 			"v1_amphures":         "POST /v1/amphures",
 			"v1_tambons":          "POST /v1/tambons",
 			"v1_findbyzipcode":    "POST /v1/findbyzipcode",
-			"v1_search_by_vector": "POST /v1/search-by-vector",
+			"v1_search_by_vector": "POST /v1/search-product",
 			"v1_command":          "POST /v1/command",
 			"v1_select":           "POST /v1/select",
 			"v1_pgcommand":        "POST /v1/pgcommand",

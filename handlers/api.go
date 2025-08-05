@@ -853,7 +853,7 @@ func (h *APIHandler) FindByZipCode(c *gin.Context) {
 // @Produce json
 // @Param search body models.SearchParameters true "Search parameters"
 // @Success 200 {object} models.APIResponse
-// @Router /search-by-vector [post]
+// @Router /search-product [post]
 
 func (h *APIHandler) SearchProductsByVector(c *gin.Context) {
 	startTime := time.Now()
