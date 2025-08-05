@@ -1959,3 +1959,259 @@ func (s *PostgreSQLService) loadBalanceForICCodesInDatabase(ctx context.Context,
 
 	return results, nil
 }
+
+// SearchProductsByExactBarcodeInCollection searches specifically in ic_inventory_barcode.barcode field in specific database
+func (s *PostgreSQLService) SearchProductsByExactBarcodeInCollection(ctx context.Context, query string, limit, offset int, collection string) ([]map[string]interface{}, int, error) {
+	// Get database name from collection (convert to lowercase)
+	databaseName := strings.ToLower(collection)
+	if databaseName == "" {
+		// Fallback to default database from config
+		databaseName = s.config.PostgreSQL.Database
+	}
+
+	// Create new connection for the specific database
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		s.config.PostgreSQL.Host,
+		s.config.PostgreSQL.Port,
+		s.config.PostgreSQL.User,
+		s.config.PostgreSQL.Password,
+		databaseName)
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to connect to database '%s': %w", databaseName, err)
+	}
+	defer db.Close()
+
+	// Test connection to the specific database
+	if err := db.Ping(); err != nil {
+		return nil, 0, fmt.Errorf("failed to ping database '%s': %w", databaseName, err)
+	}
+
+	log.Printf("🔗 [EXACT-BARCODE-SEARCH] Connected to database: %s", databaseName)
+
+	// First check if the ic_inventory_barcode table exists
+	checkTableQuery := `
+		SELECT COUNT(*) 
+		FROM information_schema.tables 
+		WHERE table_schema = 'public' 
+		AND table_name = 'ic_inventory_barcode'`
+
+	var tableExists int
+	err = db.QueryRowContext(ctx, checkTableQuery).Scan(&tableExists)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to check ic_inventory_barcode table existence in database '%s': %w", databaseName, err)
+	}
+
+	if tableExists == 0 {
+		log.Printf("⚠️ Table 'ic_inventory_barcode' not found in database '%s', skipping barcode search", databaseName)
+		return []map[string]interface{}{}, 0, nil
+	}
+
+	// Search for exact barcode match
+	whereClause := "CAST(ib.barcode AS TEXT) = $1"
+
+	// Get count of matching records
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*) as total_count
+		FROM ic_inventory_barcode ib
+		INNER JOIN ic_inventory i ON CAST(ib.ic_code AS TEXT) = CAST(i.code AS TEXT)
+		WHERE %s`, whereClause)
+
+	var totalCount int
+	err = db.QueryRowContext(ctx, countQuery, query).Scan(&totalCount)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to execute barcode count query in database '%s': %w", databaseName, err)
+	}
+
+	if totalCount == 0 {
+		return []map[string]interface{}{}, 0, nil
+	}
+
+	// Build search query
+	searchQuery := fmt.Sprintf(`
+		SELECT COALESCE(CAST(i.code AS TEXT), 'N/A') as code, 
+			COALESCE(CAST(i.name AS TEXT), 'N/A') as name,
+			COALESCE(CAST(ib.barcode AS TEXT), 'N/A') as barcode,
+			COALESCE(CAST(i.unit_standard_code AS TEXT), 'N/A') as unit_standard_code,
+			COALESCE(ib.image_url, '') as image_url,
+			100.0 as similarity_score,
+			1 as search_priority
+		FROM ic_inventory_barcode ib
+		INNER JOIN ic_inventory i ON CAST(ib.ic_code AS TEXT) = CAST(i.code AS TEXT)
+		WHERE %s
+		ORDER BY i.name ASC
+		LIMIT $2 OFFSET $3`, whereClause)
+
+	log.Printf("🔍 [EXACT-BARCODE-SEARCH] Database: %s, SQL Query: %s", databaseName, searchQuery)
+	log.Printf("🔍 [EXACT-BARCODE-SEARCH] Parameters: [%s, %d, %d]", query, limit, offset)
+
+	rows, err := db.QueryContext(ctx, searchQuery, query, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to execute barcode search query in database '%s': %w", databaseName, err)
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var code, name, barcode, unitStandardCode, imageURL string
+		var similarityScore float64
+		var searchPriority int
+
+		err := rows.Scan(&code, &name, &barcode, &unitStandardCode, &imageURL, &similarityScore, &searchPriority)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan barcode search result: %w", err)
+		}
+
+		result := map[string]interface{}{
+			"code":             code,
+			"name":             name,
+			"barcode":          barcode,
+			"unit":             unitStandardCode,
+			"img_url":          imageURL,
+			"similarity_score": similarityScore,
+			"search_priority":  searchPriority,
+		}
+
+		results = append(results, result)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error reading barcode search results: %w", err)
+	}
+
+	log.Printf("✅ [EXACT-BARCODE-SEARCH] Search completed in database '%s': found %d results, total count: %d", databaseName, len(results), totalCount)
+
+	return results, totalCount, nil
+}
+
+// SearchProductsByExactCodeInCollection searches specifically for exact ic_code match in specific database
+func (s *PostgreSQLService) SearchProductsByExactCodeInCollection(ctx context.Context, query string, limit, offset int, collection string) ([]map[string]interface{}, int, error) {
+	// Get database name from collection (convert to lowercase)
+	databaseName := strings.ToLower(collection)
+	if databaseName == "" {
+		// Fallback to default database from config
+		databaseName = s.config.PostgreSQL.Database
+	}
+
+	// Create new connection for the specific database
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		s.config.PostgreSQL.Host,
+		s.config.PostgreSQL.Port,
+		s.config.PostgreSQL.User,
+		s.config.PostgreSQL.Password,
+		databaseName)
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to connect to database '%s': %w", databaseName, err)
+	}
+	defer db.Close()
+
+	// Test connection to the specific database
+	if err := db.Ping(); err != nil {
+		return nil, 0, fmt.Errorf("failed to ping database '%s': %w", databaseName, err)
+	}
+
+	log.Printf("🔗 [EXACT-CODE-SEARCH] Connected to database: %s", databaseName)
+
+	// First check if the ic_inventory table exists
+	checkTableQuery := `
+		SELECT COUNT(*) 
+		FROM information_schema.tables 
+		WHERE table_schema = 'public' 
+		AND table_name = 'ic_inventory'`
+
+	var tableExists int
+	err = db.QueryRowContext(ctx, checkTableQuery).Scan(&tableExists)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to check table existence in database '%s': %w", databaseName, err)
+	}
+
+	if tableExists == 0 {
+		return nil, 0, fmt.Errorf("table 'ic_inventory' not found in database '%s' - please create the table or contact system administrator", databaseName)
+	}
+
+	// Search for exact code match
+	whereClause := "CAST(code AS TEXT) = $1"
+
+	// Get count of matching records
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*) as total_count
+		FROM ic_inventory 
+		WHERE %s`, whereClause)
+
+	var totalCount int
+	err = db.QueryRowContext(ctx, countQuery, query).Scan(&totalCount)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to execute code count query in database '%s': %w", databaseName, err)
+	}
+
+	if totalCount == 0 {
+		return []map[string]interface{}{}, 0, nil
+	}
+
+	// Build search query
+	searchQuery := fmt.Sprintf(`
+		SELECT COALESCE(CAST(i.code AS TEXT), 'N/A') as code, 
+			COALESCE(CAST(i.name AS TEXT), 'N/A') as name,
+			COALESCE(CAST(i.unit_standard_code AS TEXT), 'N/A') as unit_standard_code,
+			COALESCE(i.item_type, 0) as item_type,
+			COALESCE(i.row_order_ref, 0) as row_order_ref,
+			COALESCE(ib.image_url, '') as image_url,
+			100.0 as similarity_score,
+			1 as search_priority
+		FROM ic_inventory i
+		LEFT JOIN (
+			SELECT ic_code, MAX(image_url) as image_url
+			FROM ic_inventory_barcode
+			WHERE image_url IS NOT NULL AND image_url != ''
+			GROUP BY ic_code
+		) ib ON ib.ic_code = i.code
+		WHERE %s
+		ORDER BY i.name ASC
+		LIMIT $2 OFFSET $3`, whereClause)
+
+	log.Printf("🔍 [EXACT-CODE-SEARCH] Database: %s, SQL Query: %s", databaseName, searchQuery)
+	log.Printf("🔍 [EXACT-CODE-SEARCH] Parameters: [%s, %d, %d]", query, limit, offset)
+
+	rows, err := db.QueryContext(ctx, searchQuery, query, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to execute code search query in database '%s': %w", databaseName, err)
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var code, name, unitStandardCode, imageURL string
+		var itemType, rowOrderRef, searchPriority int
+		var similarityScore float64
+
+		err := rows.Scan(&code, &name, &unitStandardCode, &itemType, &rowOrderRef, &imageURL, &similarityScore, &searchPriority)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan code search result: %w", err)
+		}
+
+		result := map[string]interface{}{
+			"code":             code,
+			"name":             name,
+			"unit":             unitStandardCode,
+			"item_type":        itemType,
+			"row_order_ref":    rowOrderRef,
+			"img_url":          imageURL,
+			"similarity_score": similarityScore,
+			"search_priority":  searchPriority,
+			"barcode":          "N/A", // Add default barcode field
+		}
+
+		results = append(results, result)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error reading code search results: %w", err)
+	}
+
+	log.Printf("✅ [EXACT-CODE-SEARCH] Search completed in database '%s': found %d results, total count: %d", databaseName, len(results), totalCount)
+
+	return results, totalCount, nil
+}

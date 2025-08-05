@@ -891,9 +891,19 @@ func (h *APIHandler) SearchProductsByVector(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	// 1. Exact match by barcode
+	// 1. Exact match by barcode (use collection-specific search if collection is provided)
 	if h.postgreSQLService != nil {
-		barcodeResults, total, err := h.postgreSQLService.SearchProductsByExactBarcode(ctx, query, limit, offset)
+		var barcodeResults []map[string]interface{}
+		var total int
+		var err error
+
+		if collection != "" {
+			// Use collection-specific search with exact barcode pattern
+			barcodeResults, total, err = h.postgreSQLService.SearchProductsByExactBarcodeInCollection(ctx, query, limit, offset, collection)
+		} else {
+			barcodeResults, total, err = h.postgreSQLService.SearchProductsByExactBarcode(ctx, query, limit, offset)
+		}
+
 		if err == nil && total > 0 {
 			var convertedResults []services.SearchResult
 			for _, result := range barcodeResults {
@@ -922,9 +932,19 @@ func (h *APIHandler) SearchProductsByVector(c *gin.Context) {
 		}
 	}
 
-	// 2. Exact match by ic_code
+	// 2. Exact match by ic_code (use collection-specific search if collection is provided)
 	if h.postgreSQLService != nil {
-		icCodeResults, total, err := h.postgreSQLService.SearchProductsByExactCode(ctx, query, limit, offset)
+		var icCodeResults []map[string]interface{}
+		var total int
+		var err error
+
+		if collection != "" {
+			// Use collection-specific search with exact code pattern
+			icCodeResults, total, err = h.postgreSQLService.SearchProductsByExactCodeInCollection(ctx, query, limit, offset, collection)
+		} else {
+			icCodeResults, total, err = h.postgreSQLService.SearchProductsByExactCode(ctx, query, limit, offset)
+		}
+
 		if err == nil && total > 0 {
 			var convertedResults []services.SearchResult
 			for _, result := range icCodeResults {
