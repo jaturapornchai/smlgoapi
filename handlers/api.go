@@ -887,6 +887,7 @@ func (h *APIHandler) SearchProductsByVector(c *gin.Context) {
 	if offset < 0 {
 		offset = 0
 	}
+	collection := params.Collection // Get collection from request body
 
 	ctx := c.Request.Context()
 
@@ -961,7 +962,7 @@ func (h *APIHandler) SearchProductsByVector(c *gin.Context) {
 		return
 	}
 
-	vectorProducts, err := h.weaviateService.SearchProducts(ctx, query, limit)
+	vectorProducts, err := h.weaviateService.SearchProductsWithCollection(ctx, query, limit, collection)
 	if err != nil {
 		log.Printf("❌ [VECTOR-SEARCH] Weaviate vector search failed: %v", err)
 		c.JSON(http.StatusInternalServerError, models.APIResponse{
@@ -986,7 +987,13 @@ func (h *APIHandler) SearchProductsByVector(c *gin.Context) {
 
 	if len(icCodes) > 0 && h.postgreSQLService != nil {
 		barcodeMapping := h.weaviateService.GetICCodeToBarcodeMap(vectorProducts)
-		searchResults, totalCount, err = h.postgreSQLService.SearchProductsByBarcodesWithRelevanceAndBarcodeMap(ctx, icCodes, relevanceMap, barcodeMapping, limit, offset)
+
+		// Use collection-specific search if collection is provided
+		if collection != "" {
+			searchResults, totalCount, err = h.postgreSQLService.SearchProductsByBarcodesWithRelevanceAndBarcodeMapInCollection(ctx, icCodes, relevanceMap, barcodeMapping, limit, offset, collection)
+		} else {
+			searchResults, totalCount, err = h.postgreSQLService.SearchProductsByBarcodesWithRelevanceAndBarcodeMap(ctx, icCodes, relevanceMap, barcodeMapping, limit, offset)
+		}
 		if err != nil {
 			log.Printf("❌ [VECTOR-SEARCH] PostgreSQL search by IC codes failed: %v", err)
 			c.JSON(http.StatusInternalServerError, models.APIResponse{

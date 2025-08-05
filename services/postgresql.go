@@ -597,8 +597,8 @@ func (s *PostgreSQLService) SearchProducts(ctx context.Context, query string, li
 	searchParams = append(searchParams, offset)         // offset
 
 	// Log the actual SQL query for debugging
-	log.Printf("🔍 SQL Query: %s", searchQuery)
-	log.Printf("🔍 Parameters: %v", searchParams)
+	// log.Printf("🔍 SQL Query: %s", searchQuery)
+	// log.Printf("🔍 Parameters: %v", searchParams)
 
 	rows, err := s.db.QueryContext(ctx, searchQuery, searchParams...)
 	if err != nil {
@@ -823,8 +823,8 @@ func (s *PostgreSQLService) SearchProductsByExactBarcode(ctx context.Context, qu
 		ORDER BY i.name ASC
 		LIMIT $2 OFFSET $3`, whereClause)
 
-	log.Printf("🔍 [BARCODE-SEARCH] SQL Query: %s", searchQuery)
-	log.Printf("🔍 [BARCODE-SEARCH] Parameters: [%s, %d, %d]", query, limit, offset)
+	// log.Printf("🔍 [BARCODE-SEARCH] SQL Query: %s", searchQuery)
+	// log.Printf("🔍 [BARCODE-SEARCH] Parameters: [%s, %d, %d]", query, limit, offset)
 
 	rows, err := s.db.QueryContext(ctx, searchQuery, query, limit, offset)
 	if err != nil {
@@ -944,8 +944,8 @@ func (s *PostgreSQLService) SearchProductsByExactCode(ctx context.Context, query
 		ORDER BY name ASC
 		LIMIT $2 OFFSET $3`, whereClause)
 
-	log.Printf("🔍 [CODE-SEARCH] SQL Query: %s", searchQuery)
-	log.Printf("🔍 [CODE-SEARCH] Parameters: [%s, %d, %d]", query, limit, offset)
+	// log.Printf("🔍 [CODE-SEARCH] SQL Query: %s", searchQuery)
+	// log.Printf("🔍 [CODE-SEARCH] Parameters: [%s, %d, %d]", query, limit, offset)
 
 	rows, err := s.db.QueryContext(ctx, searchQuery, query, limit, offset)
 	if err != nil {
@@ -1109,8 +1109,8 @@ func (s *PostgreSQLService) SearchProductsByBarcodesWithRelevanceAndBarcodeMap(c
 	// Add limit and offset to parameters
 	params = append(params, limit, offset)
 
-	log.Printf("🔍 [BARCODE-MAP-SEARCH] SQL Query: %s", searchQuery)
-	log.Printf("🔍 [BARCODE-MAP-SEARCH] Parameters: %v", params)
+	// log.Printf("🔍 [BARCODE-MAP-SEARCH] SQL Query: %s", searchQuery)
+	// log.Printf("🔍 [BARCODE-MAP-SEARCH] Parameters: %v", params)
 
 	rows, err := s.db.QueryContext(ctx, searchQuery, params...)
 	if err != nil {
@@ -1252,8 +1252,8 @@ func (s *PostgreSQLService) SearchProductsByLikeBarcode(ctx context.Context, que
 		ORDER BY i.name ASC
 		LIMIT $2 OFFSET $3`, whereClause)
 
-	log.Printf("🔍 [BARCODE-LIKE-SEARCH] SQL Query: %s", searchQuery)
-	log.Printf("🔍 [BARCODE-LIKE-SEARCH] Parameters: [%s, %d, %d]", queryWithWildcards, limit, offset)
+	// log.Printf("🔍 [BARCODE-LIKE-SEARCH] SQL Query: %s", searchQuery)
+	// log.Printf("🔍 [BARCODE-LIKE-SEARCH] Parameters: [%s, %d, %d]", queryWithWildcards, limit, offset)
 
 	rows, err := s.db.QueryContext(ctx, searchQuery, queryWithWildcards, limit, offset)
 	if err != nil {
@@ -1374,8 +1374,8 @@ func (s *PostgreSQLService) SearchProductsByLikeCode(ctx context.Context, query 
 		ORDER BY name ASC
 		LIMIT $2 OFFSET $3`, whereClause)
 
-	log.Printf("🔍 [CODE-LIKE-SEARCH] SQL Query: %s", searchQuery)
-	log.Printf("🔍 [CODE-LIKE-SEARCH] Parameters: [%s, %d, %d]", queryWithWildcards, limit, offset)
+	// log.Printf("🔍 [CODE-LIKE-SEARCH] SQL Query: %s", searchQuery)
+	// log.Printf("🔍 [CODE-LIKE-SEARCH] Parameters: [%s, %d, %d]", queryWithWildcards, limit, offset)
 
 	rows, err := s.db.QueryContext(ctx, searchQuery, queryWithWildcards, limit, offset)
 	if err != nil {
@@ -1649,4 +1649,313 @@ func (s *PostgreSQLService) SearchProductsSimpleLike(ctx context.Context, query 
 
 	log.Printf("✅ [SIMPLE-LIKE-SEARCH] Found %d results for pattern '%s'", len(results), query)
 	return results, totalCount, nil
+}
+
+// SearchProductsByBarcodesWithRelevanceAndBarcodeMapInCollection performs search with barcode mapping in specific database/collection
+func (s *PostgreSQLService) SearchProductsByBarcodesWithRelevanceAndBarcodeMapInCollection(ctx context.Context, barcodes []string, relevanceMap map[string]float64, barcodeMap map[string]string, limit, offset int, collection string) ([]map[string]interface{}, int, error) {
+	if len(barcodes) == 0 {
+		return []map[string]interface{}{}, 0, nil
+	}
+
+	// Get database name from collection (convert to lowercase)
+	databaseName := strings.ToLower(collection)
+	if databaseName == "" {
+		// Fallback to default database from config
+		databaseName = s.config.PostgreSQL.Database
+	}
+
+	// Create new connection for the specific database
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		s.config.PostgreSQL.Host,
+		s.config.PostgreSQL.Port,
+		s.config.PostgreSQL.User,
+		s.config.PostgreSQL.Password,
+		databaseName)
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to connect to database '%s': %w", databaseName, err)
+	}
+	defer db.Close()
+
+	// Test connection to the specific database
+	if err := db.Ping(); err != nil {
+		return nil, 0, fmt.Errorf("failed to ping database '%s': %w", databaseName, err)
+	}
+
+	log.Printf("🔗 [COLLECTION-SEARCH] Connected to database: %s", databaseName)
+
+	// First check if the ic_inventory table exists
+	checkTableQuery := `
+		SELECT COUNT(*) 
+		FROM information_schema.tables 
+		WHERE table_schema = 'public' 
+		AND table_name = 'ic_inventory'`
+
+	var tableExists int
+	err = db.QueryRowContext(ctx, checkTableQuery).Scan(&tableExists)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to check table existence in database '%s': %w", databaseName, err)
+	}
+
+	if tableExists == 0 {
+		return nil, 0, fmt.Errorf("table 'ic_inventory' not found in database '%s' - please create the table or contact system administrator", databaseName)
+	}
+
+	// Build IN clause for barcode filtering
+	placeholders := make([]string, len(barcodes))
+	params := make([]interface{}, len(barcodes))
+	for i, barcode := range barcodes {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		params[i] = barcode
+	}
+
+	whereClause := fmt.Sprintf("CAST(code AS TEXT) IN (%s)", strings.Join(placeholders, ","))
+
+	// Get count of matching records
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*) as total_count
+		FROM ic_inventory 
+		WHERE %s`, whereClause)
+
+	countRows, err := db.QueryContext(ctx, countQuery, params...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to execute count query in database '%s': %w", databaseName, err)
+	}
+	defer countRows.Close()
+
+	var totalCount int
+	if countRows.Next() {
+		if err := countRows.Scan(&totalCount); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan count result: %w", err)
+		}
+	}
+
+	// Build search query with barcode filtering and ordering by relevance (if available) then by name
+	var orderClause string
+	if relevanceMap != nil && len(relevanceMap) > 0 {
+		// Create CASE statement for relevance-based ordering
+		var caseClauses []string
+		for code, relevance := range relevanceMap {
+			caseClauses = append(caseClauses, fmt.Sprintf("WHEN CAST(code AS TEXT) = '%s' THEN %f",
+				strings.Replace(code, "'", "''", -1), relevance)) // Escape single quotes
+		}
+		orderClause = fmt.Sprintf(`ORDER BY 
+			CASE %s ELSE 0 END DESC, 
+			name ASC`, strings.Join(caseClauses, " "))
+	} else {
+		orderClause = "ORDER BY name ASC"
+	}
+
+	searchQuery := fmt.Sprintf(`
+		SELECT COALESCE(CAST(i.code AS TEXT), 'N/A') as code, 
+			COALESCE(CAST(i.name AS TEXT), 'N/A') as name,
+			COALESCE(CAST(i.unit_standard_code AS TEXT), 'N/A') as unit_standard_code,
+			COALESCE(i.item_type, 0) as item_type,
+			COALESCE(i.row_order_ref, 0) as row_order_ref,
+			COALESCE(ib.image_url, '') as image_url,
+			6 as search_priority
+		FROM ic_inventory i
+		LEFT JOIN (
+			SELECT ic_code, MAX(image_url) as image_url
+			FROM ic_inventory_barcode
+			WHERE image_url IS NOT NULL AND image_url != ''
+			GROUP BY ic_code
+		) ib ON ib.ic_code = i.code
+		WHERE %s
+		%s
+		LIMIT $%d OFFSET $%d`,
+		whereClause, orderClause, len(params)+1, len(params)+2)
+
+	// Add limit and offset to parameters
+	params = append(params, limit, offset)
+
+	// log.Printf("🔍 [COLLECTION-SEARCH] Database: %s, SQL Query: %s", databaseName, searchQuery)
+	// log.Printf("🔍 [COLLECTION-SEARCH] Parameters: %v", params)
+
+	rows, err := db.QueryContext(ctx, searchQuery, params...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to execute search query in database '%s': %w", databaseName, err)
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	var icCodes []string
+
+	for rows.Next() {
+		var code, name, unitStandardCode, imageURL string
+		var itemType, rowOrderRef, searchPriority int
+
+		err := rows.Scan(&code, &name, &unitStandardCode, &itemType, &rowOrderRef, &imageURL, &searchPriority)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan search result: %w", err)
+		}
+
+		icCodes = append(icCodes, code)
+
+		// Get relevance score if available
+		relevanceScore := 0.0
+		if relevanceMap != nil {
+			if score, exists := relevanceMap[code]; exists {
+				relevanceScore = score
+			}
+		}
+
+		// Get barcode mapping if available
+		mappedBarcode := "N/A"
+		if barcodeMap != nil {
+			if barcode, exists := barcodeMap[code]; exists {
+				mappedBarcode = barcode
+			}
+		}
+
+		result := map[string]interface{}{
+			"code":             code,
+			"name":             name,
+			"unit":             unitStandardCode,
+			"item_type":        itemType,
+			"row_order_ref":    rowOrderRef,
+			"img_url":          imageURL,
+			"similarity_score": relevanceScore,
+			"search_priority":  searchPriority,
+			"barcode":          mappedBarcode,
+		}
+
+		results = append(results, result)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error reading search results: %w", err)
+	}
+
+	log.Printf("🔍 [COLLECTION-SEARCH] Found %d IC codes from database '%s', fetching additional data...", len(icCodes), databaseName)
+
+	// Enhanced data loading with proper error handling
+	if len(icCodes) > 0 {
+		// Load prices and balance using the same database connection
+		priceResults, priceErr := s.loadPricesForICCodesInDatabase(ctx, db, icCodes, databaseName)
+		if priceErr != nil {
+			log.Printf("⚠️ [COLLECTION-SEARCH] Price loading failed for database '%s': %v", databaseName, priceErr)
+		}
+
+		balanceResults, balanceErr := s.loadBalanceForICCodesInDatabase(ctx, db, icCodes, databaseName)
+		if balanceErr != nil {
+			log.Printf("⚠️ [COLLECTION-SEARCH] Balance loading failed for database '%s': %v", databaseName, balanceErr)
+		}
+
+		// Merge additional data into results
+		for i := range results {
+			code := results[i]["code"].(string)
+
+			// Add price data
+			if priceData, exists := priceResults[code]; exists {
+				for key, value := range priceData {
+					results[i][key] = value
+				}
+			}
+
+			// Add balance data
+			if balanceData, exists := balanceResults[code]; exists {
+				for key, value := range balanceData {
+					results[i][key] = value
+				}
+			}
+		}
+
+		log.Printf("💰 [COLLECTION-SEARCH] Price data: %d/%d products have pricing in database '%s'", len(priceResults), len(icCodes), databaseName)
+		log.Printf("📦 [COLLECTION-SEARCH] Balance data: %d/%d products have stock info in database '%s'", len(balanceResults), len(icCodes), databaseName)
+	}
+
+	log.Printf("✅ [COLLECTION-SEARCH] Search completed in database '%s': found %d results, total count: %d", databaseName, len(results), totalCount)
+
+	return results, totalCount, nil
+}
+
+// Helper methods for loading additional data in specific database
+func (s *PostgreSQLService) loadPricesForICCodesInDatabase(ctx context.Context, db *sql.DB, icCodes []string, databaseName string) (map[string]map[string]interface{}, error) {
+	results := make(map[string]map[string]interface{})
+
+	if len(icCodes) == 0 {
+		return results, nil
+	}
+
+	// Build IN clause
+	placeholders := make([]string, len(icCodes))
+	params := make([]interface{}, len(icCodes))
+	for i, code := range icCodes {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		params[i] = code
+	}
+
+	query := fmt.Sprintf(`
+		SELECT COALESCE(CAST(ic_code AS TEXT), 'N/A') as ic_code,
+			COALESCE(price, 0) as price,
+			COALESCE(CAST(supplier_code AS TEXT), 'N/A') as supplier_code
+		FROM ic_price 
+		WHERE CAST(ic_code AS TEXT) IN (%s)`, strings.Join(placeholders, ","))
+
+	rows, err := db.QueryContext(ctx, query, params...)
+	if err != nil {
+		return results, fmt.Errorf("failed to load prices from database '%s': %w", databaseName, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var icCode, supplierCode string
+		var price float64
+
+		if err := rows.Scan(&icCode, &price, &supplierCode); err != nil {
+			continue // Skip problematic rows
+		}
+
+		results[icCode] = map[string]interface{}{
+			"price":         price,
+			"supplier_code": supplierCode,
+		}
+	}
+
+	return results, nil
+}
+
+func (s *PostgreSQLService) loadBalanceForICCodesInDatabase(ctx context.Context, db *sql.DB, icCodes []string, databaseName string) (map[string]map[string]interface{}, error) {
+	results := make(map[string]map[string]interface{})
+
+	if len(icCodes) == 0 {
+		return results, nil
+	}
+
+	// Build IN clause
+	placeholders := make([]string, len(icCodes))
+	params := make([]interface{}, len(icCodes))
+	for i, code := range icCodes {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		params[i] = code
+	}
+
+	query := fmt.Sprintf(`
+		SELECT COALESCE(CAST(ic_code AS TEXT), 'N/A') as ic_code,
+			COALESCE(balance_qty, 0) as balance_qty
+		FROM ic_balance 
+		WHERE CAST(ic_code AS TEXT) IN (%s)`, strings.Join(placeholders, ","))
+
+	rows, err := db.QueryContext(ctx, query, params...)
+	if err != nil {
+		return results, fmt.Errorf("failed to load balance from database '%s': %w", databaseName, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var icCode string
+		var balanceQty float64
+
+		if err := rows.Scan(&icCode, &balanceQty); err != nil {
+			continue // Skip problematic rows
+		}
+
+		results[icCode] = map[string]interface{}{
+			"balance_qty": balanceQty,
+		}
+	}
+
+	return results, nil
 }

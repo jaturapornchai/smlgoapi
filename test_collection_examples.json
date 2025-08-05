@@ -1,0 +1,90 @@
+{
+  "name": "SMLGOAPI Search By Vector with Collection as Database",
+  "description": "Test collection parameter as database name in /search-by-vector endpoint",
+  "requests": [
+    {
+      "name": "Search with Default Database",
+      "method": "POST",
+      "url": "{{base_url}}/v1/search-by-vector",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "query": "โตโยต้า คอยล์",
+        "limit": 10,
+        "offset": 0
+      },
+      "description": "Search without specifying collection (uses default database from ENV)"
+    },
+    {
+      "name": "Search in Changthai Database",
+      "method": "POST",
+      "url": "{{base_url}}/v1/search-by-vector",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "query": "toyota coil",
+        "limit": 10,
+        "offset": 0,
+        "collection": "Changthai"
+      },
+      "description": "Search in 'changthai' database (collection name converted to lowercase)"
+    },
+    {
+      "name": "Search in Product Database",
+      "method": "POST",
+      "url": "{{base_url}}/v1/search-by-vector",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "query": "brake pad",
+        "limit": 5,
+        "offset": 0,
+        "collection": "Product"
+      },
+      "description": "Search in 'product' database (collection name converted to lowercase)"
+    },
+    {
+      "name": "Search with Mixed Case Collection",
+      "method": "POST",
+      "url": "{{base_url}}/v1/search-by-vector",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "query": "honda",
+        "limit": 20,
+        "offset": 10,
+        "collection": "TOYOTA_PARTS"
+      },
+      "description": "Search in 'toyota_parts' database (mixed case converted to lowercase)"
+    },
+    {
+      "name": "Test Non-Existent Database",
+      "method": "POST",
+      "url": "{{base_url}}/v1/search-by-vector",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "query": "test",
+        "limit": 5,
+        "offset": 0,
+        "collection": "NonExistentDB"
+      },
+      "description": "Test error handling for non-existent database 'nonexistentdb'"
+    }
+  ],
+  "variables": {
+    "base_url": "http://localhost:8008"
+  },
+  "notes": [
+    "Collection name is automatically converted to lowercase",
+    "Collection name becomes the PostgreSQL database name",
+    "Each request creates a new connection to the specified database",
+    "Default database is used when collection is empty or not provided",
+    "Proper error handling for non-existent databases and tables"
+  ]
+}
