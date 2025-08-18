@@ -41,7 +41,8 @@ type SearchRequest struct {
 
 // CommandRequest represents a command request for executing SQL commands
 type CommandRequest struct {
-	Query string `json:"query" binding:"required"` // SQL command to execute
+	Query      string `json:"query" binding:"required"` // SQL command to execute
+	Collection string `json:"collection,omitempty"`     // Database name (optional)
 }
 
 // CommandResponse represents the response from command execution
@@ -50,13 +51,15 @@ type CommandResponse struct {
 	Message  string      `json:"message,omitempty"`
 	Result   interface{} `json:"result,omitempty"`
 	Command  string      `json:"command,omitempty"`
+	Database string      `json:"database,omitempty"` // Database name used
 	Duration float64     `json:"duration_ms"`
 	Error    string      `json:"error,omitempty"`
 }
 
 // SelectRequest represents a select query request
 type SelectRequest struct {
-	Query string `json:"query" binding:"required"` // SELECT query to execute
+	Query      string `json:"query" binding:"required"` // SELECT query to execute
+	Collection string `json:"collection,omitempty"`     // Database name (optional)
 }
 
 // SelectResponse represents the response from select query
@@ -65,6 +68,7 @@ type SelectResponse struct {
 	Message  string        `json:"message,omitempty"`
 	Data     []interface{} `json:"data,omitempty"`
 	Query    string        `json:"query,omitempty"`
+	Database string        `json:"database,omitempty"` // Database name used
 	RowCount int           `json:"row_count"`
 	Duration float64       `json:"duration_ms"`
 	Error    string        `json:"error,omitempty"`

@@ -9,7 +9,7 @@
 				"build",
 				"-o",
 				"smlgoapi.exe",
-				"main.go"
+				"."
 			],
 			"group": "build",
 			"problemMatcher": [
@@ -22,7 +22,7 @@
 			"command": "go",
 			"args": [
 				"run",
-				"main.go"
+				"."
 			],
 			"group": "test",
 			"isBackground": true,

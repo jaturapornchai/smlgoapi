@@ -263,11 +263,11 @@ func (h *APIHandler) SelectEndpoint(c *gin.Context) {
 
 // PgCommandEndpoint godoc
 // @Summary Execute PostgreSQL database command
-// @Description Execute any PostgreSQL SQL command (INSERT, UPDATE, DELETE, CREATE, etc.) via JSON request
+// @Description Execute any PostgreSQL SQL command (INSERT, UPDATE, DELETE, CREATE, etc.) via JSON request with optional database selection
 // @Tags database
 // @Accept json
 // @Produce json
-// @Param command body models.CommandRequest true "Command to execute"
+// @Param command body models.CommandRequest true "Command to execute with optional collection/database"
 // @Success 200 {object} models.CommandResponse
 // @Router /pgcommand [post]
 func (h *APIHandler) PgCommandEndpoint(c *gin.Context) {
@@ -284,43 +284,61 @@ func (h *APIHandler) PgCommandEndpoint(c *gin.Context) {
 		return
 	}
 
-	log.Printf("🐘 [pgcommand] Executing PostgreSQL command: %s", commandReq.Query)
+	// Determine which database to connect to
+	targetDB := "default"
+	if commandReq.Collection != "" {
+		targetDB = commandReq.Collection
+	}
+
+	log.Printf("🐘 [pgcommand] Executing PostgreSQL command in database '%s': %s", targetDB, commandReq.Query)
 
 	ctx := c.Request.Context()
 
-	// Execute command using PostgreSQL service
-	result, err := h.postgreSQLService.ExecuteCommand(ctx, commandReq.Query)
+	var result interface{}
+	var err error
+
+	// Execute command using appropriate service method
+	if commandReq.Collection != "" {
+		// Use collection-specific method (creates new connection)
+		result, err = h.postgreSQLService.ExecuteCommandInCollection(ctx, commandReq.Query, commandReq.Collection)
+	} else {
+		// Use default connection
+		result, err = h.postgreSQLService.ExecuteCommand(ctx, commandReq.Query)
+	}
+
 	duration := float64(time.Since(startTime).Nanoseconds()) / 1e6
 
 	if err != nil {
-		log.Printf("❌ [pgcommand] Execution failed: %v", err)
+		log.Printf("❌ [pgcommand] Execution failed in database '%s': %v", targetDB, err)
 		c.JSON(http.StatusInternalServerError, models.CommandResponse{
 			Success:  false,
 			Error:    fmt.Sprintf("PostgreSQL command execution failed: %s", err.Error()),
 			Command:  commandReq.Query,
+			Database: targetDB,
 			Duration: duration,
 		})
 		return
 	}
 
-	log.Printf("✅ [pgcommand] Execution successful in %.2fms", duration)
+	log.Printf("✅ [pgcommand] Execution successful in database '%s' in %.2fms", targetDB, duration)
 
 	c.JSON(http.StatusOK, models.CommandResponse{
 		Success:  true,
-		Message:  "PostgreSQL command executed successfully",
+		Message:  fmt.Sprintf("PostgreSQL command executed successfully in database '%s'", targetDB),
 		Result:   result,
 		Command:  commandReq.Query,
+		Database: targetDB,
 		Duration: duration,
 	})
 }
 
 // PgSelectEndpoint godoc
 // @Summary Execute PostgreSQL SELECT query
-// @Description Execute PostgreSQL SELECT query and return data via JSON request
+// @Description Execute PostgreSQL SELECT query and return data via JSON request with optional database selection
 // @Tags database
 // @Accept json
 // @Produce json
-// @Param select body models.SelectRequest true "SELECT query to execute"
+// @Param select body models.SelectRequest true "SELECT query to execute with optional collection/database"
 // @Success 200 {object} models.SelectResponse
 // @Router /pgselect [post]
 func (h *APIHandler) PgSelectEndpoint(c *gin.Context) {
@@ -337,33 +355,51 @@ func (h *APIHandler) PgSelectEndpoint(c *gin.Context) {
 		return
 	}
 
-	log.Printf("🐘 [pgselect] Executing PostgreSQL query: %s", selectReq.Query)
+	// Determine which database to connect to
+	targetDB := "default"
+	if selectReq.Collection != "" {
+		targetDB = selectReq.Collection
+	}
+
+	log.Printf("🐘 [pgselect] Executing PostgreSQL query in database '%s': %s", targetDB, selectReq.Query)
 
 	ctx := c.Request.Context()
 
-	// Execute select query using PostgreSQL service
-	data, err := h.postgreSQLService.ExecuteSelect(ctx, selectReq.Query)
+	var data []interface{}
+	var err error
+
+	// Execute select query using appropriate service method
+	if selectReq.Collection != "" {
+		// Use collection-specific method (creates new connection)
+		data, err = h.postgreSQLService.ExecuteSelectInCollection(ctx, selectReq.Query, selectReq.Collection)
+	} else {
+		// Use default connection
+		data, err = h.postgreSQLService.ExecuteSelect(ctx, selectReq.Query)
+	}
+
 	duration := float64(time.Since(startTime).Nanoseconds()) / 1e6
 
 	if err != nil {
-		log.Printf("❌ [pgselect] Query failed: %v", err)
+		log.Printf("❌ [pgselect] Query failed in database '%s': %v", targetDB, err)
 		c.JSON(http.StatusInternalServerError, models.SelectResponse{
 			Success:  false,
 			Error:    fmt.Sprintf("PostgreSQL query execution failed: %s", err.Error()),
 			Query:    selectReq.Query,
+			Database: targetDB,
 			Duration: duration,
 		})
 		return
 	}
 
 	rowCount := len(data)
-	log.Printf("✅ [pgselect] Query successful: %d rows returned in %.2fms", rowCount, duration)
+	log.Printf("✅ [pgselect] Query successful in database '%s': %d rows returned in %.2fms", targetDB, rowCount, duration)
 
 	c.JSON(http.StatusOK, models.SelectResponse{
 		Success:  true,
-		Message:  fmt.Sprintf("PostgreSQL query executed successfully, %d rows returned", rowCount),
+		Message:  fmt.Sprintf("PostgreSQL query executed successfully in database '%s', %d rows returned", targetDB, rowCount),
 		Data:     data,
 		Query:    selectReq.Query,
+		Database: targetDB,
 		RowCount: rowCount,
 		Duration: duration,
 	})

@@ -2215,3 +2215,132 @@ func (s *PostgreSQLService) SearchProductsByExactCodeInCollection(ctx context.Co
 
 	return results, totalCount, nil
 }
+
+// ExecuteCommandInCollection executes a SQL command in the specified database/collection
+func (s *PostgreSQLService) ExecuteCommandInCollection(ctx context.Context, query string, collection string) (interface{}, error) {
+	// Get database name from collection (convert to lowercase)
+	databaseName := strings.ToLower(collection)
+	if databaseName == "" {
+		// Fallback to default database from config
+		databaseName = s.config.PostgreSQL.Database
+	}
+
+	// Create new connection for the specific database
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		s.config.PostgreSQL.Host,
+		s.config.PostgreSQL.Port,
+		s.config.PostgreSQL.User,
+		s.config.PostgreSQL.Password,
+		databaseName)
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database '%s': %w", databaseName, err)
+	}
+	defer db.Close()
+
+	// Test connection to the specific database
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping database '%s': %w", databaseName, err)
+	}
+
+	log.Printf("🔗 [PG-COMMAND-COLLECTION] Connected to database: %s", databaseName)
+
+	// Execute the command
+	result, err := db.ExecContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("command execution failed in database '%s': %w", databaseName, err)
+	}
+
+	// Get rows affected if possible
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		// Some commands might not return rows affected, return basic success
+		return map[string]interface{}{
+			"status":   "success",
+			"query":    query,
+			"database": databaseName,
+		}, nil
+	}
+
+	return map[string]interface{}{
+		"status":        "success",
+		"rows_affected": rowsAffected,
+		"query":         query,
+		"database":      databaseName,
+	}, nil
+}
+
+// ExecuteSelectInCollection executes a SELECT query in the specified database/collection
+func (s *PostgreSQLService) ExecuteSelectInCollection(ctx context.Context, query string, collection string) ([]interface{}, error) {
+	// Get database name from collection (convert to lowercase)
+	databaseName := strings.ToLower(collection)
+	if databaseName == "" {
+		// Fallback to default database from config
+		databaseName = s.config.PostgreSQL.Database
+	}
+
+	// Create new connection for the specific database
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		s.config.PostgreSQL.Host,
+		s.config.PostgreSQL.Port,
+		s.config.PostgreSQL.User,
+		s.config.PostgreSQL.Password,
+		databaseName)
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database '%s': %w", databaseName, err)
+	}
+	defer db.Close()
+
+	// Test connection to the specific database
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping database '%s': %w", databaseName, err)
+	}
+
+	log.Printf("🔗 [PG-SELECT-COLLECTION] Connected to database: %s", databaseName)
+
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query execution failed in database '%s': %w", databaseName, err)
+	}
+	defer rows.Close()
+
+	// Get column information
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get columns in database '%s': %w", databaseName, err)
+	}
+
+	var results []interface{}
+
+	for rows.Next() {
+		// Create a slice of interface{} to hold the values
+		values := make([]interface{}, len(columns))
+		valuePtrs := make([]interface{}, len(columns))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		// Scan the row into the value pointers
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return nil, fmt.Errorf("failed to scan row in database '%s': %w", databaseName, err)
+		}
+
+		// Create a map for this row
+		rowMap := make(map[string]interface{})
+		for i, col := range columns {
+			val := values[i]
+			if b, ok := val.([]byte); ok {
+				// Convert []byte to string
+				rowMap[col] = string(b)
+			} else {
+				rowMap[col] = val
+			}
+		}
+		results = append(results, rowMap)
+	}
+
+	return results, nil
+}
