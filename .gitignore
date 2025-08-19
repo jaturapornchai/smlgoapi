@@ -18,8 +18,8 @@
 go.work
 
 # Environment variables
-.env.local
-.env.*.local
+# .env.local
+# .env.*.local
 
 # Configuration files with sensitive data
 smlgoapi.json
