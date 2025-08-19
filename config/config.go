@@ -10,19 +10,35 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// Default configuration values
+const (
+	defaultHost        = "0.0.0.0"
+	defaultPort        = "8008"
+	defaultDBHost      = "localhost"
+	defaultDBPort      = "5432"
+	defaultDBUser      = "postgres"
+	defaultDBName      = "postgres"
+	defaultSSLMode     = "disable"
+	defaultWeaviateURL = "http://localhost:8080"
+	configFileName     = "smlgoapi.json"
+	envFileName        = ".env"
+)
+
+// Log messages
+const (
+	msgConfigNotFound  = "📄 %s not found, falling back to environment variables"
+	msgLoadingFromEnv  = "📄 Loading configuration from environment variables"
+	msgLoadingFromJSON = "📄 Loading configuration from %s"
+	msgEnvLoadError    = "❌ Error loading .env file: %v"
+	msgJSONReadError   = "❌ Error reading JSON config: %v"
+	msgJSONParseError  = "❌ Error parsing JSON config: %v"
+)
+
 type Config struct {
 	Server struct {
 		Port string `json:"port"`
 		Host string `json:"host"`
 	} `json:"server"`
-	ClickHouse struct {
-		Host     string `json:"host"`
-		Port     string `json:"port"`
-		User     string `json:"user"`
-		Password string `json:"password"`
-		Database string `json:"database"`
-		Secure   bool   `json:"secure"`
-	} `json:"clickhouse"`
 	PostgreSQL struct {
 		Host     string `json:"host"`
 		Port     string `json:"port"`
@@ -31,6 +47,13 @@ type Config struct {
 		Database string `json:"database"`
 		SSLMode  string `json:"sslmode"`
 	} `json:"postgresql"`
+	ClickHouse struct {
+		Host     string `json:"host"`
+		Port     string `json:"port"`
+		User     string `json:"user"`
+		Password string `json:"password"`
+		Database string `json:"database"`
+	} `json:"clickhouse"`
 	Weaviate struct {
 		URL    string `json:"url"`
 		Scheme string `json:"scheme"`
@@ -43,14 +66,6 @@ type JSONConfig struct {
 		Host string `json:"host"`
 		Port string `json:"port"`
 	} `json:"server"`
-	ClickHouse struct {
-		Host     string `json:"host"`
-		Port     string `json:"port"`
-		User     string `json:"user"`
-		Password string `json:"password"`
-		Database string `json:"database"`
-		Secure   bool   `json:"secure"`
-	} `json:"clickhouse"`
 	PostgreSQL struct {
 		Host     string `json:"host"`
 		Port     string `json:"port"`
@@ -59,6 +74,13 @@ type JSONConfig struct {
 		Database string `json:"database"`
 		SSLMode  string `json:"sslmode"`
 	} `json:"postgresql"`
+	ClickHouse struct {
+		Host     string `json:"host"`
+		Port     string `json:"port"`
+		User     string `json:"user"`
+		Password string `json:"password"`
+		Database string `json:"database"`
+	} `json:"clickhouse"`
 	// Alternative field name for backward compatibility
 	Postgres struct {
 		Host     string `json:"host"`
@@ -81,12 +103,6 @@ func LoadConfig() *Config {
 		log.Println("📄 Loading configuration from smlgoapi.json")
 		config.Server.Host = jsonConfig.Server.Host
 		config.Server.Port = jsonConfig.Server.Port
-		config.ClickHouse.Host = jsonConfig.ClickHouse.Host
-		config.ClickHouse.Port = jsonConfig.ClickHouse.Port
-		config.ClickHouse.User = jsonConfig.ClickHouse.User
-		config.ClickHouse.Password = jsonConfig.ClickHouse.Password
-		config.ClickHouse.Database = jsonConfig.ClickHouse.Database
-		config.ClickHouse.Secure = jsonConfig.ClickHouse.Secure
 
 		// Support both "postgresql" and "postgres" field names
 		if jsonConfig.PostgreSQL.Host != "" {
@@ -109,6 +125,13 @@ func LoadConfig() *Config {
 			}
 		}
 
+		// ClickHouse configuration
+		config.ClickHouse.Host = jsonConfig.ClickHouse.Host
+		config.ClickHouse.Port = jsonConfig.ClickHouse.Port
+		config.ClickHouse.User = jsonConfig.ClickHouse.User
+		config.ClickHouse.Password = jsonConfig.ClickHouse.Password
+		config.ClickHouse.Database = jsonConfig.ClickHouse.Database
+
 		// Weaviate configuration
 		config.Weaviate.URL = jsonConfig.Weaviate.URL
 		config.Weaviate.Scheme = jsonConfig.Weaviate.Scheme
@@ -129,13 +152,6 @@ func LoadConfig() *Config {
 	// Server configuration
 	config.Server.Port = getEnv("SERVER_PORT", "8080")
 	config.Server.Host = getEnv("SERVER_HOST", "localhost")
-	// ClickHouse configuration
-	config.ClickHouse.Host = getEnv("CLICKHOUSE_HOST", "localhost")
-	config.ClickHouse.Port = getEnv("CLICKHOUSE_PORT", "9000")
-	config.ClickHouse.User = getEnv("CLICKHOUSE_USER", "default")
-	config.ClickHouse.Password = getEnv("CLICKHOUSE_PASSWORD", "")
-	config.ClickHouse.Database = getEnv("CLICKHOUSE_DATABASE", "default")
-	config.ClickHouse.Secure = getEnv("CLICKHOUSE_SECURE", "false") == "true"
 
 	// PostgreSQL configuration
 	config.PostgreSQL.Host = getEnv("POSTGRESQL_HOST", "localhost")
@@ -144,6 +160,13 @@ func LoadConfig() *Config {
 	config.PostgreSQL.Password = getEnv("POSTGRESQL_PASSWORD", "")
 	config.PostgreSQL.Database = getEnv("POSTGRESQL_DATABASE", "postgres")
 	config.PostgreSQL.SSLMode = getEnv("POSTGRESQL_SSLMODE", "disable")
+
+	// ClickHouse configuration
+	config.ClickHouse.Host = getEnv("CLICKHOUSE_HOST", "localhost")
+	config.ClickHouse.Port = getEnv("CLICKHOUSE_PORT", "9000")
+	config.ClickHouse.User = getEnv("CLICKHOUSE_USER", "default")
+	config.ClickHouse.Password = getEnv("CLICKHOUSE_PASSWORD", "")
+	config.ClickHouse.Database = getEnv("CLICKHOUSE_DATABASE", "default")
 
 	// Weaviate configuration
 	config.Weaviate.URL = getEnv("WEAVIATE_URL", "goapi.dev.dedepos.com:18008")
@@ -181,17 +204,6 @@ func loadJSONConfig() *JSONConfig {
 	return nil
 }
 
-func (c *Config) GetClickHouseDSN() string {
-	return fmt.Sprintf("clickhouse://%s:%s@%s:%s/%s?secure=%t",
-		c.ClickHouse.User,
-		c.ClickHouse.Password,
-		c.ClickHouse.Host,
-		c.ClickHouse.Port,
-		c.ClickHouse.Database,
-		c.ClickHouse.Secure,
-	)
-}
-
 func (c *Config) GetPostgreSQLDSN() string {
 	return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
 		c.PostgreSQL.User,
@@ -200,6 +212,16 @@ func (c *Config) GetPostgreSQLDSN() string {
 		c.PostgreSQL.Port,
 		c.PostgreSQL.Database,
 		c.PostgreSQL.SSLMode,
+	)
+}
+
+func (c *Config) GetClickHouseDSN() string {
+	return fmt.Sprintf("clickhouse://%s:%s@%s:%s/%s",
+		c.ClickHouse.User,
+		c.ClickHouse.Password,
+		c.ClickHouse.Host,
+		c.ClickHouse.Port,
+		c.ClickHouse.Database,
 	)
 }
 

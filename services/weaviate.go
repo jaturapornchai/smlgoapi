@@ -119,15 +119,10 @@ func getEmbeddingVector(query string) ([]float32, error) {
 
 // SearchProducts performs vector search using Weaviate nearVector (embedding)
 func (w *WeaviateService) SearchProducts(ctx context.Context, query string, limit int) ([]Product, error) {
-	return w.SearchProductsWithCollection(ctx, query, limit, "")
-}
-
-// SearchProductsWithCollection performs vector search using Weaviate nearVector with specified collection
-func (w *WeaviateService) SearchProductsWithCollection(ctx context.Context, query string, limit int, collection string) ([]Product, error) {
-	className := collection
-
-	// print log className
-	log.Printf("Searching products in class: %s", className)
+	className := os.Getenv("WEAVIATE_COLLECTION")
+	if className == "" {
+		className = "Product"
+	}
 
 	// 1. Get embedding vector from embedding service
 	queryVector, err := getEmbeddingVector(query)

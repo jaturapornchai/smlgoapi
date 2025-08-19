@@ -9,7 +9,7 @@
 				"build",
 				"-o",
 				"smlgoapi.exe",
-				"main.go"
+				"."
 			],
 			"group": "build",
 			"problemMatcher": [
@@ -22,23 +22,10 @@
 			"command": "go",
 			"args": [
 				"run",
-				"main.go"
+				"."
 			],
 			"group": "test",
 			"isBackground": true,
-			"problemMatcher": [
-				"$go"
-			]
-		},
-		{
-			"label": "Run ClickHouse Test (Legacy)",
-			"type": "shell",
-			"command": "go",
-			"args": [
-				"run",
-				"test_clickhouse.go"
-			],
-			"group": "test",
 			"problemMatcher": [
 				"$go"
 			]

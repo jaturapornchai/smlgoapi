@@ -51,6 +51,3 @@ Thumbs.db
 
 # Logs
 *.log
-
-# Image cache directory (temporary files)
-image_cache/

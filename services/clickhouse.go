@@ -4,138 +4,159 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
+	"time"
 
 	"smlgoapi/config"
-	"smlgoapi/models"
 
-	_ "github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2"
 )
 
 type ClickHouseService struct {
-	db     *sql.DB
 	config *config.Config
 }
 
-func NewClickHouseService(config *config.Config) (*ClickHouseService, error) {
-	db, err := sql.Open("clickhouse", config.GetClickHouseDSN())
-	if err != nil {
-		return nil, fmt.Errorf("failed to open ClickHouse connection: %w", err)
-	}
+func NewClickHouseService(cfg *config.Config) (*ClickHouseService, error) {
+	return &ClickHouseService{
+		config: cfg,
+	}, nil
+}
+
+// GetDatabaseConnection returns a connection to a specific ClickHouse database
+func (ch *ClickHouseService) GetDatabaseConnection(databaseName string) (*sql.DB, error) {
+	// Open connection using ClickHouse driver
+	db := clickhouse.OpenDB(&clickhouse.Options{
+		Addr: []string{fmt.Sprintf("%s:%s", ch.config.ClickHouse.Host, ch.config.ClickHouse.Port)},
+		Auth: clickhouse.Auth{
+			Database: databaseName,
+			Username: ch.config.ClickHouse.User,
+			Password: ch.config.ClickHouse.Password,
+		},
+		Settings: clickhouse.Settings{
+			"max_execution_time": 60,
+		},
+		DialTimeout: 5 * time.Second,
+	})
 
 	// Test connection
-	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("failed to ping ClickHouse: %w", err)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := db.PingContext(ctx); err != nil {
+		return nil, fmt.Errorf("failed to connect to ClickHouse database '%s': %w", databaseName, err)
 	}
 
-	return &ClickHouseService{
-		db:     db,
-		config: config,
-	}, nil
+	log.Printf("🎯 Connected to ClickHouse database: %s", databaseName)
+	return db, nil
 }
 
-func (s *ClickHouseService) Close() error {
-	return s.db.Close()
-}
-
-func (s *ClickHouseService) GetVersion(ctx context.Context) (string, error) {
-	var version string
-	err := s.db.QueryRowContext(ctx, "SELECT version()").Scan(&version)
-	return version, err
-}
-
-func (s *ClickHouseService) GetTables(ctx context.Context) ([]models.Table, error) {
-	rows, err := s.db.QueryContext(ctx, "SHOW TABLES")
+// CheckDatabaseExists checks if a database exists in ClickHouse
+func (ch *ClickHouseService) CheckDatabaseExists(databaseName string) (bool, error) {
+	// Connect to system database to check if target database exists
+	db, err := ch.GetDatabaseConnection("system")
 	if err != nil {
-		return nil, fmt.Errorf("failed to query tables: %w", err)
+		return false, fmt.Errorf("failed to connect to ClickHouse system database: %w", err)
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var count int
+	query := "SELECT count() FROM system.databases WHERE name = ?"
+	err = db.QueryRowContext(ctx, query, databaseName).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to check database existence: %w", err)
+	}
+
+	return count > 0, nil
+}
+
+// CheckTableExists checks if a table exists in a ClickHouse database
+func (ch *ClickHouseService) CheckTableExists(databaseName, tableName string) (bool, error) {
+	db, err := ch.GetDatabaseConnection(databaseName)
+	if err != nil {
+		return false, fmt.Errorf("failed to connect to ClickHouse database '%s': %w", databaseName, err)
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var count int
+	query := "SELECT count() FROM system.tables WHERE database = ? AND name = ?"
+	err = db.QueryRowContext(ctx, query, databaseName, tableName).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to check table existence: %w", err)
+	}
+
+	return count > 0, nil
+}
+
+// GetDatabaseList returns a list of all databases in ClickHouse
+func (ch *ClickHouseService) GetDatabaseList() ([]string, error) {
+	db, err := ch.GetDatabaseConnection("system")
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to ClickHouse system database: %w", err)
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	query := "SELECT name FROM system.databases ORDER BY name"
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database list: %w", err)
 	}
 	defer rows.Close()
 
-	var tables []models.Table
+	var databases []string
 	for rows.Next() {
-		var table models.Table
-		if err := rows.Scan(&table.Name); err != nil {
-			return nil, fmt.Errorf("failed to scan table: %w", err)
+		var dbName string
+		if err := rows.Scan(&dbName); err != nil {
+			return nil, fmt.Errorf("failed to scan database name: %w", err)
 		}
-		tables = append(tables, table)
-	}
-
-	return tables, rows.Err()
-}
-
-// ExecuteCommand executes a SQL command (INSERT, UPDATE, DELETE, CREATE, etc.)
-func (s *ClickHouseService) ExecuteCommand(ctx context.Context, query string) (interface{}, error) {
-	// Execute the command
-	result, err := s.db.ExecContext(ctx, query)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute command: %w", err)
-	}
-
-	// Get rows affected if possible
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		// Some commands might not return rows affected, return basic success
-		return map[string]interface{}{
-			"status": "success",
-			"query":  query,
-		}, nil
-	}
-
-	return map[string]interface{}{
-		"status":        "success",
-		"rows_affected": rowsAffected,
-		"query":         query,
-	}, nil
-}
-
-// ExecuteSelect executes a SELECT query and returns the result data
-func (s *ClickHouseService) ExecuteSelect(ctx context.Context, query string) ([]interface{}, error) {
-	rows, err := s.db.QueryContext(ctx, query)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute select query: %w", err)
-	}
-	defer rows.Close()
-
-	// Get column information
-	columns, err := rows.Columns()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get columns: %w", err)
-	}
-
-	var results []interface{}
-
-	for rows.Next() {
-		// Create a slice of interface{} to hold the values
-		values := make([]interface{}, len(columns))
-		valuePtrs := make([]interface{}, len(columns))
-
-		for i := range columns {
-			valuePtrs[i] = &values[i]
-		}
-
-		// Scan the row into the value pointers
-		if err := rows.Scan(valuePtrs...); err != nil {
-			return nil, fmt.Errorf("failed to scan row: %w", err)
-		}
-
-		// Create a map for this row
-		rowMap := make(map[string]interface{})
-		for i, col := range columns {
-			val := values[i]
-
-			// Convert []uint8 to string if needed
-			if b, ok := val.([]uint8); ok {
-				val = string(b)
-			}
-
-			rowMap[col] = val
-		}
-
-		results = append(results, rowMap)
+		databases = append(databases, dbName)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows iteration error: %w", err)
+		return nil, fmt.Errorf("error iterating database rows: %w", err)
 	}
 
-	return results, nil
+	return databases, nil
+}
+
+// GetTableList returns a list of all tables in a ClickHouse database
+func (ch *ClickHouseService) GetTableList(databaseName string) ([]string, error) {
+	db, err := ch.GetDatabaseConnection(databaseName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to ClickHouse database '%s': %w", databaseName, err)
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	query := "SELECT name FROM system.tables WHERE database = ? ORDER BY name"
+	rows, err := db.QueryContext(ctx, query, databaseName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get table list: %w", err)
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var tableName string
+		if err := rows.Scan(&tableName); err != nil {
+			return nil, fmt.Errorf("failed to scan table name: %w", err)
+		}
+		tables = append(tables, tableName)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating table rows: %w", err)
+	}
+
+	return tables, nil
 }

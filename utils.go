@@ -5,12 +5,18 @@ import (
 	"strings"
 )
 
+const (
+	fallbackHost = "localhost"
+	dnsResolver  = "8.8.8.8:80"
+	localHost    = "0.0.0.0:"
+)
+
 // getLocalIP returns the local IP address of the machine
 func getLocalIP() string {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
+	conn, err := net.Dial("udp", dnsResolver)
 	if err != nil {
 		// Fallback to localhost if can't determine IP
-		return "localhost"
+		return fallbackHost
 	}
 	defer conn.Close()
 
@@ -23,8 +29,8 @@ func getDisplayURL(serverAddr string) string {
 	localIP := getLocalIP()
 
 	// Replace 0.0.0.0 with actual IP for display purposes
-	if strings.HasPrefix(serverAddr, "0.0.0.0:") {
-		port := strings.TrimPrefix(serverAddr, "0.0.0.0:")
+	if strings.HasPrefix(serverAddr, localHost) {
+		port := strings.TrimPrefix(serverAddr, localHost)
 		return localIP + ":" + port
 	}
 

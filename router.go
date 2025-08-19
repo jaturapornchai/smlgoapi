@@ -17,7 +17,9 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 
 	// Middleware
 	router.Use(gin.Logger())
-	router.Use(gin.Recovery()) // CORS middleware
+	router.Use(gin.Recovery())
+
+	// CORS middleware
 	router.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"}, // In production, specify your frontend domain
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"},
@@ -30,31 +32,34 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 	// API documentation endpoint (root)
 	router.GET("/", RootHandler)
 
+	// Health check endpoint (available at root level)
+	router.GET("/health", apiHandler.HealthCheck)
+
 	// All API endpoints under /v1
 	v1 := router.Group("/v1")
 	{
-		// Health check endpoint
+		// Health check endpoint (also available under v1)
 		v1.GET("/health", apiHandler.HealthCheck)
 
-		// API documentation endpoints
-		v1.GET("/docs", DocsHandler)
+		// API guide endpoint
 		v1.GET("/guide", apiHandler.GuideEndpoint)
 
 		// Search endpoints
-		v1.POST("/search-product", apiHandler.SearchProductsByVector)
+		v1.POST("/search-by-vector", apiHandler.SearchProductsByVector)
 
-		// Database endpoints
-		v1.GET("/tables", apiHandler.GetTables)
-		v1.POST("/command", apiHandler.CommandEndpoint)
-		v1.POST("/select", apiHandler.SelectEndpoint)
+		// PostgreSQL Database endpoints
 		v1.POST("/pgcommand", apiHandler.PgCommandEndpoint)
 		v1.POST("/pgselect", apiHandler.PgSelectEndpoint)
+		v1.POST("/pgselectgroup", apiHandler.PgSelectGroupEndpoint)
+		v1.POST("/pgcheckdatabase", apiHandler.PgCheckDatabaseEndpoint)
+		v1.POST("/pgchecktable", apiHandler.PgCheckTableEndpoint)
 
-		// Thai Administrative Data endpoints
-		v1.POST("/provinces", apiHandler.GetProvinces)
-		v1.POST("/amphures", apiHandler.GetAmphures)
-		v1.POST("/tambons", apiHandler.GetTambons)
-		v1.POST("/findbyzipcode", apiHandler.FindByZipCode)
+		// ClickHouse Database endpoints
+		v1.POST("/chcommand", apiHandler.ChCommandEndpoint)
+		v1.POST("/chselect", apiHandler.ChSelectEndpoint)
+		v1.POST("/chselectgroup", apiHandler.ChSelectGroupEndpoint)
+		v1.POST("/chcheckdatabase", apiHandler.ChCheckDatabaseEndpoint)
+		v1.POST("/chchecktable", apiHandler.ChCheckTableEndpoint)
 	}
 
 	return router
