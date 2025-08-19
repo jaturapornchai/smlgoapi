@@ -82,6 +82,7 @@ type CommandResponse struct {
 	Result   interface{} `json:"result,omitempty"`
 	Database string      `json:"database,omitempty"`
 	Command  string      `json:"command,omitempty"`
+	Database string      `json:"database,omitempty"` // Database name used
 	Duration float64     `json:"duration_ms"`
 	Error    string      `json:"error,omitempty"`
 }
