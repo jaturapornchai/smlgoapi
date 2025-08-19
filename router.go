@@ -44,7 +44,7 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 		// API guide endpoint
 		v1.GET("/guide", apiHandler.GuideEndpoint)
 
-		// Search endpoints up
+		// Search endpoints
 		v1.POST("/search-by-vector", apiHandler.SearchProductsByVector)
 
 		// PostgreSQL Database endpoints
