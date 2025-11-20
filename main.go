@@ -38,6 +38,13 @@ func main() {
 	}
 	defer postgreSQLService.Close()
 
+	// Initialize MongoDB Atlas (optional - will skip if MONGODB_ATLAS_URI not set)
+	if err := handlers.InitMongoAtlas(); err != nil {
+		log.Printf("⚠️  Failed to initialize MongoDB Atlas: %v", err)
+		// Don't exit - MongoDB is optional
+	}
+	defer handlers.DisconnectMongoAtlas()
+
 	// Initialize API handlers
 	apiHandler := handlers.NewAPIHandler(postgreSQLService)
 
@@ -60,10 +67,9 @@ func main() {
 			cfg.PostgreSQL.Port,
 			cfg.PostgreSQL.Database)
 		log.Println(endpointsMsg)
-		log.Printf(healthCheckMsg, displayURL)
-		log.Printf(healthCheckV1Msg, displayURL)
-		log.Printf(apiV1Msg, displayURL)
-		log.Printf(apiLegacyMsg, displayURL)
+		for _, route := range router.Routes() {
+			log.Printf("  - %s: http://%s%s", route.Method, displayURL, route.Path)
+		}
 
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("❌ Failed to start server: %v", err)

@@ -1,0 +1,7 @@
+{
+    "collection": "test_collection",
+    "filter": {
+        "test_field": "test_value"
+    },
+    "limit": 10
+}

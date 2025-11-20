@@ -44,9 +44,6 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 		// API guide endpoint
 		v1.GET("/guide", apiHandler.GuideEndpoint)
 
-		// Search endpoints
-		v1.POST("/search-by-vector", apiHandler.SearchProductsByVector)
-
 		// PostgreSQL Database endpoints
 		v1.POST("/pgcommand", apiHandler.PgCommandEndpoint)
 		v1.POST("/pgselect", apiHandler.PgSelectEndpoint)
@@ -60,6 +57,17 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 		v1.POST("/chselectgroup", apiHandler.ChSelectGroupEndpoint)
 		v1.POST("/chcheckdatabase", apiHandler.ChCheckDatabaseEndpoint)
 		v1.POST("/chchecktable", apiHandler.ChCheckTableEndpoint)
+
+		// Result handling endpoints
+		v1.POST("/resultfromquery", apiHandler.ResultFromQueryHandler)
+		v1.POST("/resultget", apiHandler.ResultGetHandler)
+		v1.POST("/resulttopdf", apiHandler.ResultToPDFHandler)
+		v1.POST("/sendreportemail", apiHandler.SendReportEmailHandler)
+
+		// MongoDB Atlas endpoints
+		v1.POST("/mongoatlasupdate", handlers.MongoAtlasUpdateHandler) // Insert/Update (Upsert)
+		v1.POST("/mongoatlasdelete", handlers.MongoAtlasDeleteHandler) // Delete
+		v1.POST("/mongoatlasget", handlers.MongoAtlasGetHandler)       // Get/Query
 	}
 
 	return router

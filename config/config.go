@@ -12,16 +12,15 @@ import (
 
 // Default configuration values
 const (
-	defaultHost        = "0.0.0.0"
-	defaultPort        = "8008"
-	defaultDBHost      = "localhost"
-	defaultDBPort      = "5432"
-	defaultDBUser      = "postgres"
-	defaultDBName      = "postgres"
-	defaultSSLMode     = "disable"
-	defaultWeaviateURL = "http://localhost:8080"
-	configFileName     = "smlgoapi.json"
-	envFileName        = ".env"
+	defaultHost    = "0.0.0.0"
+	defaultPort    = "8008"
+	defaultDBHost  = "localhost"
+	defaultDBPort  = "5432"
+	defaultDBUser  = "postgres"
+	defaultDBName  = "postgres"
+	defaultSSLMode = "disable"
+	configFileName = "smlgoapi.json"
+	envFileName    = ".env"
 )
 
 // Log messages
@@ -54,10 +53,9 @@ type Config struct {
 		Password string `json:"password"`
 		Database string `json:"database"`
 	} `json:"clickhouse"`
-	Weaviate struct {
-		URL    string `json:"url"`
-		Scheme string `json:"scheme"`
-	} `json:"weaviate"`
+	Email struct {
+		APIKey string `json:"api_key"`
+	} `json:"email"`
 }
 
 // JSONConfig represents the structure of smlgoapi.json
@@ -81,6 +79,9 @@ type JSONConfig struct {
 		Password string `json:"password"`
 		Database string `json:"database"`
 	} `json:"clickhouse"`
+	Email struct {
+		APIKey string `json:"api_key"`
+	} `json:"email"`
 	// Alternative field name for backward compatibility
 	Postgres struct {
 		Host     string `json:"host"`
@@ -90,10 +91,6 @@ type JSONConfig struct {
 		Database string `json:"database"`
 		Secure   bool   `json:"secure"`
 	} `json:"postgres"`
-	Weaviate struct {
-		URL    string `json:"url"`
-		Scheme string `json:"scheme"`
-	} `json:"weaviate"`
 }
 
 func LoadConfig() *Config {
@@ -132,12 +129,8 @@ func LoadConfig() *Config {
 		config.ClickHouse.Password = jsonConfig.ClickHouse.Password
 		config.ClickHouse.Database = jsonConfig.ClickHouse.Database
 
-		// Weaviate configuration
-		config.Weaviate.URL = jsonConfig.Weaviate.URL
-		config.Weaviate.Scheme = jsonConfig.Weaviate.Scheme
-		if config.Weaviate.Scheme == "" {
-			config.Weaviate.Scheme = "http" // Default scheme
-		}
+		// Email configuration
+		config.Email.APIKey = jsonConfig.Email.APIKey
 
 		return config
 	}
@@ -168,9 +161,8 @@ func LoadConfig() *Config {
 	config.ClickHouse.Password = getEnv("CLICKHOUSE_PASSWORD", "")
 	config.ClickHouse.Database = getEnv("CLICKHOUSE_DATABASE", "default")
 
-	// Weaviate configuration
-	config.Weaviate.URL = getEnv("WEAVIATE_URL", "goapi.dev.dedepos.com:18008")
-	config.Weaviate.Scheme = getEnv("WEAVIATE_SCHEME", "http")
+	// Email configuration
+	config.Email.APIKey = getEnv("EMAIL_API_KEY", "")
 
 	return config
 }
@@ -227,14 +219,6 @@ func (c *Config) GetClickHouseDSN() string {
 
 func (c *Config) GetServerAddress() string {
 	return fmt.Sprintf("%s:%s", c.Server.Host, c.Server.Port)
-}
-
-func (c *Config) GetWeaviateURL() string {
-	return c.Weaviate.URL
-}
-
-func (c *Config) GetWeaviateScheme() string {
-	return c.Weaviate.Scheme
 }
 
 func getEnv(key, defaultValue string) string {

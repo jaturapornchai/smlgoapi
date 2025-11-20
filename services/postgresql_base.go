@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sync"
 
 	"smlgoapi/config"
 	"smlgoapi/models"
@@ -12,8 +13,10 @@ import (
 )
 
 type PostgreSQLService struct {
-	db     *sql.DB
-	config *config.Config
+	db                  *sql.DB
+	config              *config.Config
+	resultTableEnsured  map[string]bool
+	resultTableEnsuredM sync.Mutex
 }
 
 func NewPostgreSQLService(config *config.Config) (*PostgreSQLService, error) {
@@ -27,10 +30,18 @@ func NewPostgreSQLService(config *config.Config) (*PostgreSQLService, error) {
 		return nil, fmt.Errorf("failed to ping PostgreSQL: %w", err)
 	}
 
-	return &PostgreSQLService{
-		db:     db,
-		config: config,
-	}, nil
+	service := &PostgreSQLService{
+		db:                 db,
+		config:             config,
+		resultTableEnsured: make(map[string]bool),
+	}
+
+	if err := service.ensureResultTable(service.db, config.PostgreSQL.Database); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("ensure result table: %w", err)
+	}
+
+	return service, nil
 }
 
 func (s *PostgreSQLService) Close() error {
@@ -56,6 +67,11 @@ func (s *PostgreSQLService) GetDatabaseConnection(databaseName string) (*sql.DB,
 	if err := db.Ping(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to ping PostgreSQL database '%s': %w", databaseName, err)
+	}
+
+	if err := s.ensureResultTable(db, databaseName); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("ensure result table: %w", err)
 	}
 
 	return db, nil
@@ -91,4 +107,30 @@ func (s *PostgreSQLService) GetTables(ctx context.Context) ([]models.Table, erro
 	}
 
 	return tables, rows.Err()
+}
+
+func (s *PostgreSQLService) ensureResultTable(db *sql.DB, databaseName string) error {
+	if db == nil {
+		return fmt.Errorf("nil database connection")
+	}
+
+	s.resultTableEnsuredM.Lock()
+	if s.resultTableEnsured == nil {
+		s.resultTableEnsured = make(map[string]bool)
+	}
+	if s.resultTableEnsured[databaseName] {
+		s.resultTableEnsuredM.Unlock()
+		return nil
+	}
+	s.resultTableEnsuredM.Unlock()
+
+	if err := TableResultCreate(db); err != nil {
+		return err
+	}
+
+	s.resultTableEnsuredM.Lock()
+	s.resultTableEnsured[databaseName] = true
+	s.resultTableEnsuredM.Unlock()
+
+	return nil
 }

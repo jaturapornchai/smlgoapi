@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -28,21 +27,11 @@ const (
 type APIHandler struct {
 	postgreSQLService *services.PostgreSQLService
 	clickHouseService *services.ClickHouseService
-	weaviateService   *services.WeaviateService
+	emailService      *services.EmailService
 }
 
 func NewAPIHandler(postgreSQLService *services.PostgreSQLService) *APIHandler {
 	cfg := config.LoadConfig()
-
-	// Initialize Weaviate service with config
-	var weaviateService *services.WeaviateService
-	ws, err := services.NewWeaviateService(cfg)
-	if err != nil {
-		log.Printf("⚠️ Failed to initialize Weaviate service: %v", err)
-		weaviateService = nil
-	} else {
-		weaviateService = ws
-	}
 
 	// Initialize ClickHouse service with config
 	var clickHouseService *services.ClickHouseService
@@ -54,10 +43,13 @@ func NewAPIHandler(postgreSQLService *services.PostgreSQLService) *APIHandler {
 		clickHouseService = chs
 	}
 
+	// Initialize Email service
+	emailService := services.NewEmailService(cfg.Email.APIKey)
+
 	return &APIHandler{
 		postgreSQLService: postgreSQLService,
 		clickHouseService: clickHouseService,
-		weaviateService:   weaviateService,
+		emailService:      emailService,
 	}
 }
 
@@ -227,25 +219,6 @@ func (h *APIHandler) GuideEndpoint(c *gin.Context) {
 					},
 				},
 			},
-
-			// Vector Search Operations
-			"vector_search": map[string]interface{}{
-				"search_by_vector": map[string]interface{}{
-					"url":         fmt.Sprintf("%s/v1/search-by-vector", baseURL),
-					"method":      "POST",
-					"description": "Search products using vector similarity with AI query enhancement",
-					"body_example": map[string]interface{}{
-						"query":  "smartphone with good camera",
-						"limit":  10,
-						"offset": 0,
-						"ai":     1,
-					},
-					"query_modes": map[string]string{
-						"ai=0": "Direct vector search without AI enhancement",
-						"ai=1": "AI-enhanced query processing for better results",
-					},
-				},
-			},
 		},
 
 		"response_format": map[string]interface{}{
@@ -271,10 +244,6 @@ func (h *APIHandler) GuideEndpoint(c *gin.Context) {
 				"description": "High-performance analytics and aggregations",
 				"use_cases":   "OLAP, time-series data, real-time analytics",
 			},
-			"weaviate": map[string]string{
-				"description": "Vector database for AI-powered search",
-				"use_cases":   "Semantic search, recommendation systems",
-			},
 		},
 
 		"examples": map[string]interface{}{
@@ -286,9 +255,6 @@ func (h *APIHandler) GuideEndpoint(c *gin.Context) {
 				"clickhouse_analytics": fmt.Sprintf(`curl -X POST %s/v1/chselect \
   -H "Content-Type: application/json" \
   -d '{"database_name": "default", "query": "SELECT count() FROM system.tables"}'`, baseURL),
-				"vector_search": fmt.Sprintf(`curl -X POST %s/v1/search-by-vector \
-  -H "Content-Type: application/json" \
-  -d '{"query": "laptop for gaming", "limit": 5, "ai": 1}'`, baseURL),
 			},
 		},
 
@@ -296,7 +262,6 @@ func (h *APIHandler) GuideEndpoint(c *gin.Context) {
 			"All POST endpoints require Content-Type: application/json",
 			"PostgreSQL endpoints support multiple databases",
 			"ClickHouse endpoints optimized for analytical queries",
-			"Vector search supports AI query enhancement",
 			"Check database/table endpoints return existence status and metadata",
 			"Group select endpoints allow batch query execution",
 			"All responses include execution duration in milliseconds",
@@ -306,92 +271,4 @@ func (h *APIHandler) GuideEndpoint(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, guide)
-}
-
-// SearchProductsByVector godoc
-// @Summary Search products by vector similarity
-// @Description Search products using vector similarity with optional AI query enhancement
-// @Tags search
-// @Accept json
-// @Produce json
-// @Param search body models.SearchParameters true "Search parameters"
-// @Success 200 {object} map[string]interface{}
-// @Router /search-by-vector [post]
-func (h *APIHandler) SearchProductsByVector(c *gin.Context) {
-	if h.weaviateService == nil {
-		log.Printf("❌ [SEARCH] Weaviate service is not available")
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"success": false,
-			"error":   "Vector search service is not available",
-		})
-		return
-	}
-
-	startTime := time.Now()
-
-	// Parse search parameters
-	var searchParams models.SearchParameters
-	if err := c.ShouldBindJSON(&searchParams); err != nil {
-		log.Printf("❌ [SEARCH] JSON bind error: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"error":   "Invalid JSON: " + err.Error(),
-		})
-		return
-	}
-
-	// Validate and set defaults
-	if searchParams.Limit <= 0 {
-		searchParams.Limit = 10
-	}
-	if searchParams.Limit > 100 {
-		searchParams.Limit = 100
-	}
-
-	log.Printf("🔍 [SEARCH] Vector search: query='%s', limit=%d, ai=%d", searchParams.Query, searchParams.Limit, searchParams.AI)
-
-	// Create context with timeout
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
-	defer cancel()
-
-	// Perform search
-	searchResults, err := h.weaviateService.SearchProducts(ctx, searchParams.Query, searchParams.Limit)
-	if err != nil {
-		log.Printf("❌ [SEARCH] Search failed: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   fmt.Sprintf("Search failed: %s", err.Error()),
-			"query":   searchParams.Query,
-		})
-		return
-	}
-
-	duration := float64(time.Since(startTime).Nanoseconds()) / 1e6
-
-	log.Printf("✅ [SEARCH] Search completed: found %d results in %.2fms", len(searchResults), duration)
-
-	// Enhanced response
-	response := gin.H{
-		"success":     true,
-		"message":     "Vector search completed successfully",
-		"query":       searchParams.Query,
-		"ai_enhanced": searchParams.AI == 1,
-		"results":     searchResults,
-		"count":       len(searchResults),
-		"limit":       searchParams.Limit,
-		"offset":      searchParams.Offset,
-		"duration_ms": duration,
-		"search_type": "vector_similarity",
-		"timestamp":   time.Now().Format(time.RFC3339),
-	}
-
-	// Add AI enhancement info if used (placeholder for future AI enhancement)
-	if searchParams.AI == 1 {
-		response["ai_info"] = gin.H{
-			"enhanced_query": searchParams.Query, // Currently same as original
-			"original_query": searchParams.Query,
-		}
-	}
-
-	c.JSON(http.StatusOK, response)
 }

@@ -1,0 +1,61 @@
+{
+  "shopid": "rungroj",
+  "guid": "test-alignment-001",
+  "pdf_config": {
+    "title": "รายงานวิเคราะห์ขายขาดทุนแสดงรายละเอียดสินค้า (SRR40001)",
+    "description": "ตั้งแต่วันที่ 1 พฤศจิกายน 2567 ถึงวันที่ 30 พฤศจิกายน 2567",
+    "title_align": "C",
+    "description_align": "L",
+    "orientation": "L",
+    "page_size": "A4"
+  },
+  "column_order": ["item_code", "item_name", "qty", "price"],
+  "column_names": {
+    "item_code": "รหัสสินค้า",
+    "item_name": "ชื่อสินค้า",
+    "qty": "จำนวน",
+    "price": "ราคา"
+  },
+  "layout_config": {
+    "schema_version": 1,
+    "sections": [
+      {
+        "alias": "test",
+        "title": "รายการสินค้า",
+        "row_type": "detail",
+        "columns": [
+          {
+            "field": "item_code",
+            "label": "รหัสสินค้า",
+            "flex": 2,
+            "align": "L"
+          },
+          {
+            "field": "item_name",
+            "label": "ชื่อสินค้า",
+            "flex": 3,
+            "align": "L"
+          },
+          {
+            "field": "qty",
+            "label": "จำนวน",
+            "flex": 1,
+            "align": "R",
+            "numeric": true
+          },
+          {
+            "field": "price",
+            "label": "ราคา",
+            "flex": 2,
+            "align": "R",
+            "numeric": true
+          }
+        ]
+      }
+    ],
+    "styles": {
+      "palette": "blue",
+      "use_fill": true
+    }
+  }
+}
