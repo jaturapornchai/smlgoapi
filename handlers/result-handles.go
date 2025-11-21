@@ -2899,11 +2899,11 @@ func (h *APIHandler) SendReportEmailHandler(c *gin.Context) {
 	now := time.Now()
 	thaiMonths := []string{"", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"}
 	thaiYear := now.Year() + 543
-	
+
 	// Append timestamp to subject to prevent Gmail from grouping emails
 	thaiMonthsShort := []string{"", "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."}
 	emailSubject = fmt.Sprintf("%s - %d %s %d %02d:%02d", emailSubject, now.Day(), thaiMonthsShort[now.Month()], thaiYear, now.Hour(), now.Minute())
-	
+
 	senderName := fmt.Sprintf("%s %d %s %d %02d:%02d", reportName, now.Day(), thaiMonths[now.Month()], thaiYear, now.Hour(), now.Minute())
 
 	// Send Email

@@ -168,7 +168,7 @@ func MongoAtlasDeleteHandler(c *gin.Context) {
 
 	var reqBody struct {
 		Collection string                 `json:"collection"`
-		Filter     map[string]interface{} `json:"filter"`     // Frontend กำหนด filter เอง
+		Filter     map[string]interface{} `json:"filter"`      // Frontend กำหนด filter เอง
 		DeleteMany bool                   `json:"delete_many"` // true = deleteMany, false = deleteOne
 	}
 

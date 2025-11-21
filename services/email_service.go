@@ -44,7 +44,7 @@ func (s *EmailService) SendEmailWithAttachment(to []string, cc []string, bcc []s
 
 	// Create sender with custom name
 	if senderName == "" {
-		senderName = "SML Email Service" 
+		senderName = "SML Email Service"
 	}
 	sender := &brevo.SendSmtpEmailSender{
 		Name:  senderName,

@@ -25,7 +25,7 @@ const (
 var (
 	// Development default: แสดงทุก level
 	CurrentLogLevel = DEBUG
-	
+
 	// Map string to LogLevel
 	logLevelMap = map[string]LogLevel{
 		"DEBUG":   DEBUG,
