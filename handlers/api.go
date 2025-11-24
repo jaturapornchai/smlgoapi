@@ -53,6 +53,11 @@ func NewAPIHandler(postgreSQLService *services.PostgreSQLService) *APIHandler {
 	}
 }
 
+// GetEmailService returns the email service for scheduler use
+func (h *APIHandler) GetEmailService() *services.EmailService {
+	return h.emailService
+}
+
 // HealthCheck godoc
 // @Summary Health check endpoint
 // @Description Check if the API service is healthy and database connection is working

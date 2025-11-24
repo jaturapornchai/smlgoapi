@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -51,6 +52,23 @@ func main() {
 	// Setup Gin router
 	router := setupRouter(apiHandler)
 
+	// Start Email Scheduler
+	var scheduler *SimpleScheduler
+	if enableScheduler := os.Getenv("ENABLE_EMAIL_SCHEDULER"); enableScheduler == "true" {
+		checkIntervalStr := os.Getenv("SCHEDULER_CHECK_INTERVAL_MINUTES")
+		checkInterval, err := strconv.Atoi(checkIntervalStr)
+		if err != nil || checkInterval <= 0 {
+			checkInterval = 1 // Default to 1 minute
+		}
+
+		apiURL := "http://" + cfg.GetServerAddress()
+		scheduler = NewSimpleScheduler(checkInterval, apiURL)
+		go scheduler.Start()
+		log.Printf("✅ Email Scheduler started (checking every %d minute(s))", checkInterval)
+	} else {
+		log.Println("ℹ️  Email Scheduler disabled (set ENABLE_EMAIL_SCHEDULER=true to enable)")
+	}
+
 	// Create HTTP server
 	srv := &http.Server{
 		Addr:    cfg.GetServerAddress(),
@@ -81,6 +99,12 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Println(shutdownMsg)
+
+	// Stop scheduler if running
+	if scheduler != nil {
+		scheduler.Stop()
+		log.Println("✅ Email Scheduler stopped")
+	}
 
 	// Give a timeout for shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
