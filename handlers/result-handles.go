@@ -276,7 +276,7 @@ func (h *APIHandler) processQueryResults(ctx context.Context, shopID, guid strin
 		aliasSeen[lowerAlias] = struct{}{}
 
 		queryLower := strings.ToLower(strings.TrimSpace(item.Query))
-		if !strings.HasPrefix(queryLower, "select") {
+		if !(strings.HasPrefix(queryLower, "select") || strings.HasPrefix(queryLower, "with")) {
 			return 0, fmt.Errorf("only SELECT queries are allowed (query %d is not SELECT)", idx+1)
 		}
 
