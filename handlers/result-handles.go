@@ -1,17 +1,20 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -50,6 +53,7 @@ type pdfStyleGuide struct {
 	Header  pdfStyleBlock
 	Detail  pdfStyleBlock
 	Summary pdfStyleBlock
+	Level1  pdfStyleBlock
 	Table   pdfTableStyle
 	UseFill bool
 }
@@ -58,10 +62,12 @@ func buildStyleGuide(cfg PDFStyles) pdfStyleGuide {
 	defaultHeader := pdfStyleBlock{Background: colorWhite, Text: [3]int{17, 17, 17}, Border: [3]int{68, 68, 68}, FontStyle: "B"}
 	defaultDetail := pdfStyleBlock{Background: colorWhite, Text: [3]int{34, 34, 34}, Border: [3]int{136, 136, 136}}
 	defaultSummary := pdfStyleBlock{Background: colorWhite, Text: colorBlack, Border: colorBlack, FontStyle: "B"}
+	defaultLevel1 := pdfStyleBlock{Background: colorWhite, Text: colorBlack, Border: colorBlack, FontStyle: "B"}
 	guide := pdfStyleGuide{
 		Header:  defaultHeader,
 		Detail:  defaultDetail,
 		Summary: defaultSummary,
+		Level1:  defaultLevel1,
 		UseFill: cfg.UseFill,
 		Table: pdfTableStyle{
 			GridColor:     [3]int{204, 204, 204},
@@ -104,6 +110,18 @@ func buildStyleGuide(cfg PDFStyles) pdfStyleGuide {
 	}
 	if cfg.Summary.FontWeight != "" {
 		guide.Summary.FontStyle = fontWeightToStyle(cfg.Summary.FontWeight)
+	}
+	if cfg.Level1.Background != "" {
+		guide.Level1.Background = parseHexColor(cfg.Level1.Background, guide.Level1.Background)
+	}
+	if cfg.Level1.Text != "" {
+		guide.Level1.Text = parseHexColor(cfg.Level1.Text, guide.Level1.Text)
+	}
+	if cfg.Level1.Border != "" {
+		guide.Level1.Border = parseHexColor(cfg.Level1.Border, guide.Level1.Border)
+	}
+	if cfg.Level1.FontWeight != "" {
+		guide.Level1.FontStyle = fontWeightToStyle(cfg.Level1.FontWeight)
 	}
 	if cfg.Table.GridColor != "" {
 		guide.Table.GridColor = parseHexColor(cfg.Table.GridColor, guide.Table.GridColor)
@@ -760,6 +778,30 @@ func renderPDFWithLayout(rows []pdfResultRow, payload resultToPDFPayload) (*gofp
 		}
 	}
 
+	// Check for level_1 + detail pattern
+	var level1Section *PDFSectionConfig
+	var level1DetailSection *PDFSectionConfig
+	var level1GroupField string
+	for i, section := range visibleSections {
+		if strings.EqualFold(section.RowType, "level_1") {
+			level1Section = &visibleSections[i]
+			if len(section.Columns) > 0 {
+				level1GroupField = section.Columns[0].Field
+			}
+		}
+		if strings.EqualFold(section.RowType, "detail") && level1Section != nil && section.Alias == level1Section.Alias {
+			level1DetailSection = &visibleSections[i]
+		}
+	}
+
+	// If level_1 + detail pattern found, use special rendering
+	if level1Section != nil && level1DetailSection != nil && level1GroupField != "" {
+		rowsForAlias := aliasRows[level1Section.Alias]
+		if len(rowsForAlias) > 0 {
+			return renderLevel1WithDetail(pdf, rowsForAlias, *level1Section, *level1DetailSection, level1GroupField, payload, tableWidth, baseFont, styleGuide, columnConfigMap, aliasLevels[level1Section.Alias])
+		}
+	}
+
 	detailGroups := make(map[string]map[string][]pdfResultRow)
 	detailRenderers := make(map[string]*sectionRenderer)
 	detailDocRendered := make(map[string]map[string]bool)
@@ -852,6 +894,87 @@ func renderPDFWithLayout(rows []pdfResultRow, payload resultToPDFPayload) (*gofp
 		}
 		pdf.Ln(2 * pdfFontScale)
 		renderedAliases[section.Alias] = true
+	}
+
+	return pdf, nil
+}
+
+// renderLevel1WithDetail renders PDF with level_1 grouping header and detail rows
+func renderLevel1WithDetail(pdf *gofpdf.Fpdf, rows []pdfResultRow, level1Section, detailSection PDFSectionConfig, groupField string, payload resultToPDFPayload, tableWidth float64, baseFont string, styleGuide pdfStyleGuide, columnConfigMap map[string]PDFColumnConfig, levels []int) (*gofpdf.Fpdf, error) {
+	// Group rows by the grouping field (e.g., branch_code)
+	groupedRows := groupRowsByField(rows, groupField)
+
+	// Create renderers for both sections
+	// level_1 header has no indent
+	level1Renderer := newSectionRenderer(pdf, level1Section, payload.ColumnNames, payload.ColumnOrder, tableWidth, 0, baseFont, styleGuide, columnConfigMap, levels)
+	// detail rows have indent (เยื้องเข้ามา) เพื่อให้ดูง่ายขึ้น
+	detailIndent := 10.0 * pdfFontScale
+	detailRenderer := newSectionRenderer(pdf, detailSection, payload.ColumnNames, payload.ColumnOrder, tableWidth, detailIndent, baseFont, styleGuide, columnConfigMap, levels)
+
+	if level1Renderer == nil || detailRenderer == nil {
+		return pdf, nil
+	}
+
+	// Render dual headers (level_1 header + detail header)
+	renderDualHeaders := func() {
+		level1Renderer.headerDrawn = false
+		detailRenderer.headerDrawn = false
+		level1Renderer.skipBottomBorder = true // ไม่วาดเส้นใต้หัวคอลัมน์ level_1
+		level1Renderer.ensureSectionHeader()
+		detailRenderer.mergeWithPreviousHeader()
+		detailRenderer.ensureSectionHeader()
+	}
+
+	// Initial headers
+	renderDualHeaders()
+
+	// Get sorted group keys to maintain consistent order
+	groupKeys := make([]string, 0, len(groupedRows))
+	for key := range groupedRows {
+		groupKeys = append(groupKeys, key)
+	}
+	sort.Strings(groupKeys)
+
+	currentPage := pdf.PageNo()
+
+	for _, groupKey := range groupKeys {
+		rowsInGroup := groupedRows[groupKey]
+		if len(rowsInGroup) == 0 {
+			continue
+		}
+
+		// Check if we need to render headers on new page
+		if pdf.PageNo() != currentPage {
+			renderDualHeaders()
+			currentPage = pdf.PageNo()
+		}
+
+		// Build level_1 row data from the first row in group
+		firstRow := rowsInGroup[0]
+		level1Row := pdfResultRow{
+			Alias:       firstRow.Alias,
+			QueryNumber: firstRow.QueryNumber,
+			LineNumber:  0,
+			Level:       0,
+			TypeJSON:    0,
+			Data:        firstRow.Data,
+		}
+
+		// Render level_1 row (group header)
+		level1Renderer.renderDataRow(level1Row)
+
+		// Render detail rows for this group
+		for _, detailRow := range rowsInGroup {
+			// Check page break
+			if pdf.PageNo() != currentPage {
+				renderDualHeaders()
+				currentPage = pdf.PageNo()
+			}
+			detailRenderer.renderDataRow(detailRow)
+		}
+
+		// Add spacing between groups
+		pdf.Ln(2 * pdfFontScale)
 	}
 
 	return pdf, nil
@@ -1272,27 +1395,31 @@ func computeRowStyle(row pdfResultRow, sectionRowType string, styles pdfStyleGui
 	if strings.EqualFold(sectionRowType, "header") {
 		return styles.Header
 	}
+	if strings.EqualFold(sectionRowType, "level_1") {
+		return styles.Level1
+	}
 	return styles.Detail
 }
 
 type sectionRenderer struct {
-	pdf            *gofpdf.Fpdf
-	section        PDFSectionConfig
-	columnNames    map[string]string
-	columns        []PDFColumnConfig
-	widths         []float64
-	indent         float64
-	fontFamily     string
-	headerDrawn    bool
-	lastHeaderPage int
-	leftMargin     float64
-	styleGuide     pdfStyleGuide
-	globalConfig   map[string]PDFColumnConfig
-	lineHeight     float64
-	rowSpacing     float64
-	columnSpacing  float64
-	levelBadges    []int
-	skipTopBorder  bool
+	pdf              *gofpdf.Fpdf
+	section          PDFSectionConfig
+	columnNames      map[string]string
+	columns          []PDFColumnConfig
+	widths           []float64
+	indent           float64
+	fontFamily       string
+	headerDrawn      bool
+	lastHeaderPage   int
+	leftMargin       float64
+	styleGuide       pdfStyleGuide
+	globalConfig     map[string]PDFColumnConfig
+	lineHeight       float64
+	rowSpacing       float64
+	columnSpacing    float64
+	levelBadges      []int
+	skipTopBorder    bool
+	skipBottomBorder bool // ไม่วาดเส้นใต้หัวคอลัมน์ (สำหรับกรณี level_1 + detail)
 }
 
 func newSectionRenderer(pdf *gofpdf.Fpdf, section PDFSectionConfig, columnNames map[string]string, fallbackOrder []string, tableWidth, indent float64, fontFamily string, styleGuide pdfStyleGuide, global map[string]PDFColumnConfig, levels []int) *sectionRenderer {
@@ -1368,6 +1495,7 @@ func (sr *sectionRenderer) totalWidth() float64 {
 func (sr *sectionRenderer) renderSectionHeader() {
 	sr.refreshHeaderState()
 	skipTopBorder := sr.consumeHeaderSkip()
+	skipBottomBorder := sr.consumeBottomBorderSkip()
 	if sr.shouldDisplayTitle() {
 		sr.pdf.SetFont(sr.baseFont(), "B", 13*pdfFontScale)
 		sr.pdf.SetTextColor(sr.styleGuide.Header.Text[0], sr.styleGuide.Header.Text[1], sr.styleGuide.Header.Text[2])
@@ -1403,7 +1531,10 @@ func (sr *sectionRenderer) renderSectionHeader() {
 		sr.pdf.CellFormat(sr.widths[idx], rowHeight, label, "", 0, align, sr.styleGuide.UseFill, 0, "")
 		startX += sr.widths[idx] + sr.columnSpacing
 	}
-	sr.pdf.Line(sr.leftMargin+sr.indent, startY+rowHeight, sr.leftMargin+sr.indent+widthTotal, startY+rowHeight)
+	// ไม่วาดเส้นใต้หัวคอลัมน์ถ้า skipBottomBorder = true (กรณี level_1 + detail)
+	if !skipBottomBorder {
+		sr.pdf.Line(sr.leftMargin+sr.indent, startY+rowHeight, sr.leftMargin+sr.indent+widthTotal, startY+rowHeight)
+	}
 	spacing := pdfFontScale
 	if skipTopBorder {
 		spacing = 0
@@ -1421,12 +1552,20 @@ func (sr *sectionRenderer) consumeHeaderSkip() bool {
 	return false
 }
 
+func (sr *sectionRenderer) consumeBottomBorderSkip() bool {
+	if sr.skipBottomBorder {
+		sr.skipBottomBorder = false
+		return true
+	}
+	return false
+}
+
 func (sr *sectionRenderer) shouldDisplayTitle() bool {
 	if sr.section.Title == "" {
 		return false
 	}
 	rowType := strings.ToLower(strings.TrimSpace(sr.section.RowType))
-	if rowType == "header" || rowType == "detail" {
+	if rowType == "header" || rowType == "detail" || rowType == "level_1" {
 		return false
 	}
 	return true
@@ -2360,6 +2499,7 @@ type PDFStyles struct {
 	Header  PDFStyleBlockConfig `json:"header"`
 	Detail  PDFStyleBlockConfig `json:"detail"`
 	Summary PDFStyleBlockConfig `json:"summary"`
+	Level1  PDFStyleBlockConfig `json:"level_1"`
 	Table   PDFTableStyleConfig `json:"table"`
 }
 
@@ -2658,7 +2798,14 @@ func (h *APIHandler) GeneratePDF(ctx context.Context, shopID, guid string, paylo
 
 // SendReportEmailHandler handles generating a report PDF and sending it via email
 func (h *APIHandler) SendReportEmailHandler(c *gin.Context) {
-	log.Println("-> SendReportEmailHandler called")
+	log.Println("========== SendReportEmailHandler START ==========")
+
+	// Debug: Log raw request body
+	bodyBytes, _ := io.ReadAll(c.Request.Body)
+	log.Printf("DEBUG: Raw request body: %s", string(bodyBytes))
+
+	// Restore body for binding
+	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 
 	var payload struct {
 		ShopID     string `json:"shopid"`
@@ -2666,6 +2813,7 @@ func (h *APIHandler) SendReportEmailHandler(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&payload); err != nil {
+		log.Printf("DEBUG: JSON binding error: %v", err)
 		c.JSON(http.StatusBadRequest, map[string]string{
 			"error": "Invalid JSON payload",
 			"code":  "INVALID_JSON",
@@ -2673,8 +2821,11 @@ func (h *APIHandler) SendReportEmailHandler(c *gin.Context) {
 		return
 	}
 
+	log.Printf("DEBUG: Parsed payload - ShopID: %s, ScheduleID: %s", payload.ShopID, payload.ScheduleID)
+
 	// Validate required parameters
 	if payload.ShopID == "" {
+		log.Println("DEBUG: Missing shopid")
 		c.JSON(http.StatusBadRequest, map[string]string{
 			"error": "Missing required parameter: shopid",
 			"code":  "MISSING_SHOPID",
@@ -2682,6 +2833,7 @@ func (h *APIHandler) SendReportEmailHandler(c *gin.Context) {
 		return
 	}
 	if payload.ScheduleID == "" {
+		log.Println("DEBUG: Missing schedule_id")
 		c.JSON(http.StatusBadRequest, map[string]string{
 			"error": "Missing required parameter: schedule_id",
 			"code":  "MISSING_SCHEDULE_ID",
@@ -2690,13 +2842,14 @@ func (h *APIHandler) SendReportEmailHandler(c *gin.Context) {
 	}
 
 	// Fetch schedule config from MongoDB
+	log.Printf("DEBUG: Fetching schedule config from MongoDB - shopid: %s, schedule_id: %s", payload.ShopID, payload.ScheduleID)
 	filter := map[string]interface{}{
 		"shopid":      payload.ShopID,
 		"schedule_id": payload.ScheduleID,
 	}
 	scheduleConfig, err := FetchScheduleConfig("email_schedules", filter)
 	if err != nil {
-		log.Printf("Failed to fetch schedule config: %v", err)
+		log.Printf("DEBUG: Failed to fetch schedule config: %v", err)
 		c.JSON(http.StatusNotFound, map[string]string{
 			"error": fmt.Sprintf("Schedule not found: %v", err),
 			"code":  "SCHEDULE_NOT_FOUND",
@@ -2712,65 +2865,95 @@ func (h *APIHandler) SendReportEmailHandler(c *gin.Context) {
 	}
 
 	// Extract query config
+	log.Println("DEBUG: Extracting query_config...")
 	queryConfigRaw, ok := scheduleConfig["query_config"].(map[string]interface{})
 	if !ok {
+		log.Printf("DEBUG: query_config type assertion failed. Actual type: %T, value: %v", scheduleConfig["query_config"], scheduleConfig["query_config"])
 		c.JSON(http.StatusInternalServerError, map[string]string{
 			"error": "Invalid query_config in schedule",
 			"code":  "INVALID_SCHEDULE_CONFIG",
 		})
 		return
 	}
+	log.Printf("DEBUG: query_config extracted successfully")
 
 	// Convert query_config to struct
 	queryConfigBytes, _ := json.Marshal(queryConfigRaw)
+	log.Printf("DEBUG: query_config JSON: %s", string(queryConfigBytes))
+
 	var queryPayload resultFromQueryPayload
 	if err := json.Unmarshal(queryConfigBytes, &queryPayload); err != nil {
+		log.Printf("DEBUG: Failed to parse query config: %v", err)
 		c.JSON(http.StatusInternalServerError, map[string]string{
 			"error": fmt.Sprintf("Failed to parse query config: %v", err),
 			"code":  "CONFIG_PARSE_ERROR",
 		})
 		return
 	}
+	log.Printf("DEBUG: queryPayload parsed - ShopID: %s, QueryItems count: %d, Queries count: %d", queryPayload.ShopID, len(queryPayload.QueryItems), len(queryPayload.Queries))
 
 	// Process queries
 	guid := uuid.New().String()
+	log.Printf("DEBUG: Generated GUID: %s", guid)
 
 	queries := queryPayload.QueryItems
 	if len(queries) == 0 && len(queryPayload.Queries) > 0 {
 		queries = queryPayload.Queries
+		log.Println("DEBUG: Using 'queries' field instead of 'query_items'")
 	}
+	log.Printf("DEBUG: Total queries to process: %d", len(queries))
 
 	// Handle date replacements
 	datePreset, _ := scheduleConfig["date_preset"].(string)
+	log.Printf("DEBUG: date_preset: %s", datePreset)
+
 	if datePreset != "" {
 		startDate, endDate := calculateDateRange(datePreset)
 		startDateStr := startDate.Format("2006-01-02")
 		endDateStr := endDate.Format("2006-01-02")
 		thaiStartDateStr := formatThaiDate(startDate)
 		thaiEndDateStr := formatThaiDate(endDate)
+		log.Printf("DEBUG: Date range - start: %s, end: %s, thai_start: %s, thai_end: %s", startDateStr, endDateStr, thaiStartDateStr, thaiEndDateStr)
 
 		// Replace in queries
 		for i := range queries {
+			originalQuery := queries[i].Query
 			queries[i].Query = strings.ReplaceAll(queries[i].Query, "{{start_date}}", startDateStr)
 			queries[i].Query = strings.ReplaceAll(queries[i].Query, "{{end_date}}", endDateStr)
 			queries[i].Query = strings.ReplaceAll(queries[i].Query, "{{thai_start_date}}", thaiStartDateStr)
 			queries[i].Query = strings.ReplaceAll(queries[i].Query, "{{thai_end_date}}", thaiEndDateStr)
+			if originalQuery != queries[i].Query {
+				log.Printf("DEBUG: Query %d date replacement applied", i)
+			}
 		}
 	}
 
-	_, err = h.processQueryResults(c.Request.Context(), payload.ShopID, guid, queries)
+	// Log each query before processing
+	for i, q := range queries {
+		queryPreview := q.Query
+		if len(queryPreview) > 200 {
+			queryPreview = queryPreview[:200] + "..."
+		}
+		log.Printf("DEBUG: Query %d - Alias: %s, Query: %s", i, q.Alias, queryPreview)
+	}
+
+	log.Println("DEBUG: Starting processQueryResults...")
+	rowCount, err := h.processQueryResults(c.Request.Context(), payload.ShopID, guid, queries)
 	if err != nil {
-		log.Printf("Failed to process queries: %v", err)
+		log.Printf("DEBUG: processQueryResults failed: %v", err)
 		c.JSON(http.StatusInternalServerError, map[string]string{
 			"error": fmt.Sprintf("Failed to process queries: %v", err),
 			"code":  "QUERY_PROCESSING_ERROR",
 		})
 		return
 	}
+	log.Printf("DEBUG: processQueryResults completed - rows inserted: %d", rowCount)
 
 	// Extract PDF config
+	log.Println("DEBUG: Extracting pdf_config...")
 	pdfConfigRaw, ok := scheduleConfig["pdf_config"].(map[string]interface{})
 	if !ok {
+		log.Printf("DEBUG: pdf_config type assertion failed. Actual type: %T, value: %v", scheduleConfig["pdf_config"], scheduleConfig["pdf_config"])
 		c.JSON(http.StatusInternalServerError, map[string]string{
 			"error": "Invalid pdf_config in schedule",
 			"code":  "INVALID_SCHEDULE_CONFIG",
@@ -2779,8 +2962,11 @@ func (h *APIHandler) SendReportEmailHandler(c *gin.Context) {
 	}
 
 	pdfConfigBytes, _ := json.Marshal(pdfConfigRaw)
+	log.Printf("DEBUG: pdf_config JSON: %s", string(pdfConfigBytes))
+
 	var pdfPayload resultToPDFPayload
 	if err := json.Unmarshal(pdfConfigBytes, &pdfPayload); err != nil {
+		log.Printf("DEBUG: Failed to parse PDF config: %v", err)
 		c.JSON(http.StatusInternalServerError, map[string]string{
 			"error": fmt.Sprintf("Failed to parse PDF config: %v", err),
 			"code":  "CONFIG_PARSE_ERROR",
@@ -2792,8 +2978,11 @@ func (h *APIHandler) SendReportEmailHandler(c *gin.Context) {
 	// If the PDF config fields (Title, Orientation, etc.) are at the root of the pdf_config object
 	// instead of nested under a "pdf_config" key, we need to unmarshal them explicitly.
 	if pdfPayload.PDFConfig.Title == "" && pdfPayload.PDFConfig.Orientation == "" {
+		log.Println("DEBUG: Attempting flat PDF config unmarshal...")
 		json.Unmarshal(pdfConfigBytes, &pdfPayload.PDFConfig)
 	}
+	log.Printf("DEBUG: PDF config - Title: %s, Orientation: %s, PageSize: %s", pdfPayload.PDFConfig.Title, pdfPayload.PDFConfig.Orientation, pdfPayload.PDFConfig.PageSize)
+	log.Printf("DEBUG: PDF layout sections count: %d", len(pdfPayload.LayoutConfig.Sections))
 
 	// Ensure PDF payload has correct IDs
 	pdfPayload.ShopID = payload.ShopID
@@ -2814,24 +3003,28 @@ func (h *APIHandler) SendReportEmailHandler(c *gin.Context) {
 	}
 
 	// Generate PDF
+	log.Println("DEBUG: Starting PDF generation...")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	pdfPath, err := h.GeneratePDF(ctx, payload.ShopID, guid, pdfPayload)
 	if err != nil {
-		log.Printf("Failed to generate PDF: %v", err)
+		log.Printf("DEBUG: GeneratePDF failed: %v", err)
 		c.JSON(http.StatusInternalServerError, map[string]string{
 			"error": fmt.Sprintf("Failed to generate PDF: %v", err),
 			"code":  "PDF_GENERATION_ERROR",
 		})
 		return
 	}
+	log.Printf("DEBUG: PDF generated successfully: %s", pdfPath)
 	defer os.Remove(pdfPath) // Clean up the file after sending
 
 	// Prepare email details
 	scheduleName, _ := scheduleConfig["schedule_name"].(string)
 	reportName, _ := scheduleConfig["report_name"].(string)
 	emailSubject, _ := scheduleConfig["email_subject"].(string)
+	log.Printf("DEBUG: Email details - scheduleName: %s, reportName: %s, emailSubject: %s", scheduleName, reportName, emailSubject)
+
 	if emailSubject == "" {
 		emailSubject = fmt.Sprintf("Report: %s", reportName)
 	}
@@ -2852,10 +3045,10 @@ func (h *APIHandler) SendReportEmailHandler(c *gin.Context) {
 	// Recipients
 	var toRecipients []string
 	if recipientsRaw, ok := scheduleConfig["recipients"]; ok {
-		log.Printf("Recipients raw type: %T, value: %v", recipientsRaw, recipientsRaw)
+		log.Printf("DEBUG: Recipients raw type: %T, value: %v", recipientsRaw, recipientsRaw)
 		recipientsBytes, _ := json.Marshal(recipientsRaw)
 		if err := json.Unmarshal(recipientsBytes, &toRecipients); err != nil {
-			log.Printf("Failed to unmarshal recipients as array: %v", err)
+			log.Printf("DEBUG: Failed to unmarshal recipients as array: %v", err)
 			// Fallback: check if it is a single string
 			var singleRecipient string
 			if err2 := json.Unmarshal(recipientsBytes, &singleRecipient); err2 == nil && singleRecipient != "" {
@@ -2863,6 +3056,7 @@ func (h *APIHandler) SendReportEmailHandler(c *gin.Context) {
 			}
 		}
 	}
+	log.Printf("DEBUG: To recipients: %v", toRecipients)
 
 	var ccRecipients []string
 	if ccRaw, ok := scheduleConfig["cc_recipients"]; ok {
@@ -2874,9 +3068,10 @@ func (h *APIHandler) SendReportEmailHandler(c *gin.Context) {
 			}
 		}
 	}
+	log.Printf("DEBUG: CC recipients: %v", ccRecipients)
 
 	if len(toRecipients) == 0 {
-		log.Printf("Error: No recipients found in schedule config")
+		log.Println("DEBUG: Error - No recipients found")
 		c.JSON(http.StatusBadRequest, map[string]string{
 			"error": "No recipients specified",
 			"code":  "NO_RECIPIENTS",
@@ -2903,10 +3098,13 @@ func (h *APIHandler) SendReportEmailHandler(c *gin.Context) {
 	// Append timestamp to subject to prevent Gmail from grouping emails
 	thaiMonthsShort := []string{"", "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."}
 	emailSubject = fmt.Sprintf("%s - %d %s %d %02d:%02d", emailSubject, now.Day(), thaiMonthsShort[now.Month()], thaiYear, now.Hour(), now.Minute())
+	log.Printf("DEBUG: Final email subject with timestamp: %s", emailSubject)
 
 	senderName := fmt.Sprintf("%s %d %s %d %02d:%02d", reportName, now.Day(), thaiMonths[now.Month()], thaiYear, now.Hour(), now.Minute())
+	log.Printf("DEBUG: Sender name: %s", senderName)
 
 	// Send Email
+	log.Println("DEBUG: Sending email...")
 	err = h.emailService.SendEmailWithAttachment(
 		toRecipients,
 		ccRecipients,
@@ -2918,13 +3116,16 @@ func (h *APIHandler) SendReportEmailHandler(c *gin.Context) {
 	)
 
 	if err != nil {
-		log.Printf("Failed to send email: %v", err)
+		log.Printf("DEBUG: SendEmailWithAttachment failed: %v", err)
 		c.JSON(http.StatusInternalServerError, map[string]string{
 			"error": fmt.Sprintf("Failed to send email: %v", err),
 			"code":  "EMAIL_SEND_ERROR",
 		})
 		return
 	}
+
+	log.Println("DEBUG: Email sent successfully!")
+	log.Println("========== SendReportEmailHandler END ==========")
 
 	c.JSON(http.StatusOK, map[string]string{
 		"status":  "success",
