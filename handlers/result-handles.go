@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +28,11 @@ import (
 const (
 	aliasMetadataKey = "__result_alias"
 	pdfFontScale     = 0.5
+
+	// Column width constraints (in mm, scaled)
+	minColumnWidth = 15.0 * pdfFontScale  // ความกว้างขั้นต่ำ
+	maxColumnWidth = 120.0 * pdfFontScale // ความกว้างสูงสุด
+	cellPadding    = 1.0 * pdfFontScale   // padding ซ้าย/ขวาของ cell
 )
 
 var (
@@ -900,14 +904,34 @@ func renderPDFWithLayout(rows []pdfResultRow, payload resultToPDFPayload) (*gofp
 }
 
 // renderLevel1WithDetail renders PDF with level_1 grouping header and detail rows
-func renderLevel1WithDetail(pdf *gofpdf.Fpdf, rows []pdfResultRow, level1Section, detailSection PDFSectionConfig, groupField string, payload resultToPDFPayload, tableWidth float64, baseFont string, styleGuide pdfStyleGuide, columnConfigMap map[string]PDFColumnConfig, levels []int) (*gofpdf.Fpdf, error) {
-	// Group rows by the grouping field (e.g., branch_code)
-	groupedRows := groupRowsByField(rows, groupField)
+func renderLevel1WithDetail(pdf *gofpdf.Fpdf, rows []pdfResultRow, level1Section, detailSection PDFSectionConfig, initialGroupField string, payload resultToPDFPayload, tableWidth float64, baseFont string, styleGuide pdfStyleGuide, columnConfigMap map[string]PDFColumnConfig, levels []int) (*gofpdf.Fpdf, error) {
+	// 1. สร้าง Composite Group Key และเก็บลำดับที่เจอครั้งแรก (Stable Grouping)
+	getCompositeKey := func(row pdfResultRow) string {
+		var parts []string
+		for _, col := range level1Section.Columns {
+			parts = append(parts, stringifyValue(row.Data[col.Field]))
+		}
+		return strings.Join(parts, "|")
+	}
 
-	// Create renderers for both sections
-	// level_1 header has no indent
+	groupedRows := make(map[string][]pdfResultRow)
+	var orderedKeys []string
+	keySeen := make(map[string]bool)
+
+	for _, row := range rows {
+		key := getCompositeKey(row)
+		if key == "" {
+			continue
+		}
+		if !keySeen[key] {
+			orderedKeys = append(orderedKeys, key)
+			keySeen[key] = true
+		}
+		groupedRows[key] = append(groupedRows[key], row)
+	}
+
+	// 2. เตรียม Renderer
 	level1Renderer := newSectionRenderer(pdf, level1Section, payload.ColumnNames, payload.ColumnOrder, tableWidth, 0, baseFont, styleGuide, columnConfigMap, levels)
-	// detail rows have indent (เยื้องเข้ามา) เพื่อให้ดูง่ายขึ้น
 	detailIndent := 10.0 * pdfFontScale
 	detailRenderer := newSectionRenderer(pdf, detailSection, payload.ColumnNames, payload.ColumnOrder, tableWidth, detailIndent, baseFont, styleGuide, columnConfigMap, levels)
 
@@ -915,66 +939,73 @@ func renderLevel1WithDetail(pdf *gofpdf.Fpdf, rows []pdfResultRow, level1Section
 		return pdf, nil
 	}
 
-	// Render dual headers (level_1 header + detail header)
+	lastHeaderPage := 0
 	renderDualHeaders := func() {
+		currentPage := pdf.PageNo()
+		if lastHeaderPage == currentPage {
+			return
+		}
+		level1Renderer.skipBottomBorder = true
 		level1Renderer.headerDrawn = false
-		detailRenderer.headerDrawn = false
-		level1Renderer.skipBottomBorder = true // ไม่วาดเส้นใต้หัวคอลัมน์ level_1
-		level1Renderer.ensureSectionHeader()
+		level1Renderer.lastHeaderPage = 0
+		level1Renderer.renderSectionHeader()
+
 		detailRenderer.mergeWithPreviousHeader()
-		detailRenderer.ensureSectionHeader()
+		detailRenderer.headerDrawn = false
+		detailRenderer.lastHeaderPage = 0
+		detailRenderer.renderSectionHeader()
+		lastHeaderPage = currentPage
 	}
 
-	// Initial headers
+	// 3. เริ่มวาดตามลำดับกลุ่มที่รักษาไว้
 	renderDualHeaders()
 
-	// Get sorted group keys to maintain consistent order
-	groupKeys := make([]string, 0, len(groupedRows))
-	for key := range groupedRows {
-		groupKeys = append(groupKeys, key)
-	}
-	sort.Strings(groupKeys)
-
-	currentPage := pdf.PageNo()
-
-	for _, groupKey := range groupKeys {
+	for _, groupKey := range orderedKeys {
 		rowsInGroup := groupedRows[groupKey]
 		if len(rowsInGroup) == 0 {
 			continue
 		}
 
-		// Check if we need to render headers on new page
-		if pdf.PageNo() != currentPage {
-			renderDualHeaders()
-			currentPage = pdf.PageNo()
-		}
-
-		// Build level_1 row data from the first row in group
-		firstRow := rowsInGroup[0]
-		level1Row := pdfResultRow{
-			Alias:       firstRow.Alias,
-			QueryNumber: firstRow.QueryNumber,
-			LineNumber:  0,
-			Level:       0,
-			TypeJSON:    0,
-			Data:        firstRow.Data,
-		}
-
-		// Render level_1 row (group header)
-		level1Renderer.renderDataRow(level1Row)
-
-		// Render detail rows for this group
-		for _, detailRow := range rowsInGroup {
-			// Check page break
-			if pdf.PageNo() != currentPage {
-				renderDualHeaders()
-				currentPage = pdf.PageNo()
+		// ค้นหาแถวข้อมูลจริงๆ สำหรับ Header (เลี่ยงแถวสรุป)
+		var firstDataRow *pdfResultRow
+		for i := range rowsInGroup {
+			if rowsInGroup[i].TypeJSON == 0 {
+				firstDataRow = &rowsInGroup[i]
+				break
 			}
-			detailRenderer.renderDataRow(detailRow)
+		}
+		if firstDataRow == nil {
+			firstDataRow = &rowsInGroup[0]
 		}
 
-		// Add spacing between groups
-		pdf.Ln(2 * pdfFontScale)
+		level1Row := pdfResultRow{
+			Alias:       firstDataRow.Alias,
+			QueryNumber: firstDataRow.QueryNumber,
+			TypeJSON:    0,
+			Data:        firstDataRow.Data,
+		}
+
+		// วาด Group Header
+		if level1Renderer.renderDataRowOnly(level1Row) {
+			pdf.AddPage()
+			renderDualHeaders()
+			level1Renderer.renderDataRowOnly(level1Row)
+		}
+
+		// วาด Detail Rows
+		for _, detailRow := range rowsInGroup {
+			if detailRow.TypeJSON != 0 {
+				continue
+			}
+			if detailRenderer.renderDataRowOnly(detailRow) {
+				pdf.AddPage()
+				renderDualHeaders()
+				detailRenderer.renderDataRowOnly(detailRow)
+			}
+		}
+
+		// ระยะห่างระหว่างกลุ่ม (ลดลงเพื่อความกระชับ)
+		pdf.Ln(pdfFontScale)
 	}
 
 	return pdf, nil
@@ -1057,7 +1088,7 @@ func renderSimplePDF(rows []pdfResultRow, payload resultToPDFPayload) (*gofpdf.F
 	}
 
 	drawHeader()
-	lineHeight := 4.8 * pdfFontScale
+	lineHeight := 3.5 * pdfFontScale
 	_, pageHeight := pdf.GetPageSize()
 	_, bottomMargin := pdf.GetAutoPageBreak()
 	for _, row := range rows {
@@ -1070,11 +1101,12 @@ func renderSimplePDF(rows []pdfResultRow, payload resultToPDFPayload) (*gofpdf.F
 			} else {
 				texts[idx] = formatDisplayValue(row.Data[col])
 			}
-			wrapped := pdf.SplitLines([]byte(texts[idx]), colWidth)
-			lineCount := len(wrapped)
-			if lineCount == 0 {
-				lineCount = 1
+			// คำนวณ width ที่ใช้ได้จริงหลังหัก padding
+			availableWidth := colWidth - (cellPadding * 2)
+			if availableWidth < 1 {
+				availableWidth = colWidth
 			}
+			lineCount := countTextLinesSimple(pdf, texts[idx], availableWidth)
 			if lineCount > maxLines {
 				maxLines = lineCount
 			}
@@ -1100,8 +1132,19 @@ func renderSimplePDF(rows []pdfResultRow, payload resultToPDFPayload) (*gofpdf.F
 			if cfg, ok := columnConfigMap[columns[idx]]; ok {
 				align = resolveAlignValue(cfg)
 			}
-			pdf.SetXY(startX, startY)
-			pdf.MultiCell(colWidth, lineHeight, text, "", align, styleGuide.UseFill)
+			// วาด background ด้วยความสูงเต็ม row
+			if styleGuide.UseFill {
+				pdf.Rect(startX, startY, colWidth, rowHeight, "F")
+			}
+			// วาดข้อความด้วย padding
+			textX := startX + cellPadding
+			textWidth := colWidth - (cellPadding * 2)
+			if textWidth < 1 {
+				textWidth = colWidth
+				textX = startX
+			}
+			pdf.SetXY(textX, startY)
+			pdf.MultiCell(textWidth, lineHeight, text, "", align, false)
 			startX += colWidth
 		}
 		pdf.SetY(startY + rowHeight)
@@ -1458,7 +1501,10 @@ func newSectionRenderer(pdf *gofpdf.Fpdf, section PDFSectionConfig, columnNames 
 	}
 	widths := computeColumnWidths(colCopy, usableWidth)
 	left, _, _, _ := pdf.GetMargins()
-	rowSpacing := 0.0
+	rowSpacing := styleGuide.Table.RowSpacing * pdfFontScale
+	if rowSpacing < 0 {
+		rowSpacing = 0
+	}
 	return &sectionRenderer{
 		pdf:           pdf,
 		section:       section,
@@ -1470,7 +1516,7 @@ func newSectionRenderer(pdf *gofpdf.Fpdf, section PDFSectionConfig, columnNames 
 		leftMargin:    left,
 		styleGuide:    styleGuide,
 		globalConfig:  global,
-		lineHeight:    4.8 * pdfFontScale,
+		lineHeight:    3.5 * pdfFontScale,
 		rowSpacing:    rowSpacing,
 		columnSpacing: columnSpacing,
 		levelBadges:   levels,
@@ -1494,6 +1540,10 @@ func (sr *sectionRenderer) totalWidth() float64 {
 
 func (sr *sectionRenderer) renderSectionHeader() {
 	sr.refreshHeaderState()
+	// ป้องกันการวาด header ซ้ำในหน้าเดียวกัน
+	if sr.headerDrawn && sr.lastHeaderPage == sr.pdf.PageNo() {
+		return
+	}
 	skipTopBorder := sr.consumeHeaderSkip()
 	skipBottomBorder := sr.consumeBottomBorderSkip()
 	if sr.shouldDisplayTitle() {
@@ -1580,8 +1630,10 @@ func (sr *sectionRenderer) headerColors() ([3]int, [3]int) {
 }
 
 func (sr *sectionRenderer) refreshHeaderState() {
-	if sr.lastHeaderPage != sr.pdf.PageNo() {
+	currentPage := sr.pdf.PageNo()
+	if sr.lastHeaderPage != currentPage {
 		sr.headerDrawn = false
+		sr.lastHeaderPage = currentPage
 	}
 }
 
@@ -1617,16 +1669,76 @@ func (sr *sectionRenderer) renderDataRow(row pdfResultRow) {
 	startX := sr.leftMargin + sr.indent
 	startY := sr.pdf.GetY()
 	fill := sr.styleGuide.UseFill
+
+	// วาดแต่ละ cell โดยใช้ความสูงเท่ากันทั้งแถว
 	for idx, col := range sr.columns {
 		align := sr.resolveAlign(col)
-		sr.pdf.SetXY(startX, startY)
-		sr.pdf.MultiCell(sr.widths[idx], sr.lineHeight, texts[idx], "", align, fill)
+		sr.renderCellWithHeight(startX, startY, sr.widths[idx], rowHeight, texts[idx], align, fill)
 		startX += sr.widths[idx] + sr.columnSpacing
 	}
+
 	sr.pdf.SetY(startY + rowHeight)
 	if sr.rowSpacing > 0 {
 		sr.pdf.SetY(sr.pdf.GetY() + sr.rowSpacing)
 	}
+}
+
+// renderDataRowOnly วาด data row โดยไม่วาด header (สำหรับใช้กับ renderLevel1WithDetail)
+// Return true ถ้าจะ overflow (ไม่ได้วาดอะไร - ให้ caller จัดการ page break)
+func (sr *sectionRenderer) renderDataRowOnly(row pdfResultRow) bool {
+	texts, rowHeight := sr.measureRow(row)
+
+	// ตรวจสอบว่าจะล้นหน้าไหม - ถ้าล้นให้ return true โดยไม่วาดอะไร
+	if sr.willOverflow(rowHeight) {
+		return true
+	}
+
+	sr.drawRowContent(row, texts, rowHeight)
+	return false
+}
+
+// drawRowContent วาดเนื้อหา row (ใช้ภายใน)
+func (sr *sectionRenderer) drawRowContent(row pdfResultRow, texts []string, rowHeight float64) {
+	style := sr.resolveRowStyle(row)
+	sr.pdf.SetFont(sr.baseFont(), style.FontStyle, 11*pdfFontScale)
+	sr.pdf.SetFillColor(style.Background[0], style.Background[1], style.Background[2])
+	sr.pdf.SetDrawColor(style.Border[0], style.Border[1], style.Border[2])
+	sr.pdf.SetTextColor(style.Text[0], style.Text[1], style.Text[2])
+	startX := sr.leftMargin + sr.indent
+	startY := sr.pdf.GetY()
+	fill := sr.styleGuide.UseFill
+
+	// วาดแต่ละ cell โดยใช้ความสูงเท่ากันทั้งแถว
+	for idx, col := range sr.columns {
+		align := sr.resolveAlign(col)
+		sr.renderCellWithHeight(startX, startY, sr.widths[idx], rowHeight, texts[idx], align, fill)
+		startX += sr.widths[idx] + sr.columnSpacing
+	}
+
+	sr.pdf.SetY(startY + rowHeight)
+	if sr.rowSpacing > 0 {
+		sr.pdf.SetY(sr.pdf.GetY() + sr.rowSpacing)
+	}
+}
+
+// renderCellWithHeight วาด cell ด้วยความสูงที่กำหนด โดยจัดข้อความให้อยู่ภายใน
+func (sr *sectionRenderer) renderCellWithHeight(x, y, width, cellHeight float64, text, align string, fill bool) {
+	// วาด background ด้วยความสูงเต็ม cell ถ้าต้องการ fill
+	if fill {
+		sr.pdf.Rect(x, y, width, cellHeight, "F")
+	}
+
+	// ใช้ padding สำหรับข้อความ
+	textX := x + cellPadding
+	textWidth := width - (cellPadding * 2)
+	if textWidth < 1 {
+		textWidth = width
+		textX = x
+	}
+
+	// วาดข้อความด้วย MultiCell (จัดตำแหน่งแนวตั้ง - top)
+	sr.pdf.SetXY(textX, y)
+	sr.pdf.MultiCell(textWidth, sr.lineHeight, text, "", align, false)
 }
 
 func (sr *sectionRenderer) resolveColumnText(row pdfResultRow, col PDFColumnConfig) string {
@@ -1670,15 +1782,12 @@ func (sr *sectionRenderer) measureRow(row pdfResultRow) ([]string, float64) {
 	for idx, col := range sr.columns {
 		text := sr.resolveColumnText(row, col)
 		texts[idx] = text
-		availableWidth := sr.widths[idx]
-		if availableWidth <= 0 {
-			availableWidth = 1
+		// คำนวณ width ที่ใช้ได้จริงหลังหัก padding
+		availableWidth := sr.widths[idx] - (cellPadding * 2)
+		if availableWidth < 1 {
+			availableWidth = sr.widths[idx]
 		}
-		wrapped := sr.pdf.SplitLines([]byte(text), availableWidth)
-		lineCount := len(wrapped)
-		if lineCount == 0 {
-			lineCount = 1
-		}
+		lineCount := sr.countTextLines(text, availableWidth)
 		if lineCount > maxLines {
 			maxLines = lineCount
 		}
@@ -1688,6 +1797,41 @@ func (sr *sectionRenderer) measureRow(row pdfResultRow) ([]string, float64) {
 		rowHeight = sr.lineHeight
 	}
 	return texts, rowHeight
+}
+
+// countTextLines คำนวณจำนวนบรรทัดจริงของข้อความ (ลบ line breaks ออกก่อน และจำกัดจำนวนบรรทัด)
+func (sr *sectionRenderer) countTextLines(text string, width float64) int {
+	if text == "" {
+		return 1
+	}
+	if width <= 0 {
+		width = 1
+	}
+
+	// ลบอักขระพิเศษและ normalize ช่องว่าง
+	text = strings.ReplaceAll(text, "\n", " ")
+	text = strings.ReplaceAll(text, "\r", " ")
+	text = strings.ReplaceAll(text, "\t", " ")
+	text = strings.TrimSpace(text)
+	text = strings.Join(strings.Fields(text), " ")
+
+	if text == "" {
+		return 1
+	}
+
+	// ใช้ SplitLines เพื่อดูว่าข้อความจะ wrap กี่บรรทัด
+	wrapped := sr.pdf.SplitLines([]byte(text), width)
+	wrapCount := len(wrapped)
+	if wrapCount == 0 {
+		return 1
+	}
+
+	// จำกัดจำนวนบรรทัดสูงสุดต่อแถวเพื่อป้องกันช่องว่างขนาดยักษ์ (Gaps)
+	// สำหรับรายการสินค้า 5 บรรทัดถือว่าเพียงพอแล้ว
+	if wrapCount > 5 {
+		wrapCount = 5
+	}
+	return wrapCount
 }
 
 func (sr *sectionRenderer) estimateRowHeight(row pdfResultRow) float64 {
@@ -1745,10 +1889,43 @@ func resolveAlignValue(col PDFColumnConfig) string {
 	return string(alignRune)
 }
 
+// countTextLinesSimple คำนวณจำนวนบรรทัดจริงของข้อความ (ลบ line breaks ออกก่อน และจำกัดจำนวนบรรทัด)
+func countTextLinesSimple(pdf *gofpdf.Fpdf, text string, width float64) int {
+	if text == "" {
+		return 1
+	}
+	if width <= 0 {
+		width = 1
+	}
+
+	text = strings.ReplaceAll(text, "\n", " ")
+	text = strings.ReplaceAll(text, "\r", " ")
+	text = strings.ReplaceAll(text, "\t", " ")
+	text = strings.TrimSpace(text)
+	text = strings.Join(strings.Fields(text), " ")
+
+	if text == "" {
+		return 1
+	}
+
+	wrapped := pdf.SplitLines([]byte(text), width)
+	wrapCount := len(wrapped)
+	if wrapCount == 0 {
+		return 1
+	}
+
+	if wrapCount > 5 {
+		wrapCount = 5
+	}
+	return wrapCount
+}
+
 func computeColumnWidths(columns []PDFColumnConfig, totalWidth float64) []float64 {
 	if len(columns) == 0 {
 		return nil
 	}
+
+	// คำนวณ total flex
 	totalFlex := 0
 	for _, col := range columns {
 		flex := col.Flex
@@ -1760,6 +1937,8 @@ func computeColumnWidths(columns []PDFColumnConfig, totalWidth float64) []float6
 	if totalFlex == 0 {
 		totalFlex = len(columns)
 	}
+
+	// คำนวณ width เริ่มต้นตาม flex ratio
 	widths := make([]float64, len(columns))
 	for idx, col := range columns {
 		flex := col.Flex
@@ -1768,7 +1947,60 @@ func computeColumnWidths(columns []PDFColumnConfig, totalWidth float64) []float6
 		}
 		widths[idx] = totalWidth * (float64(flex) / float64(totalFlex))
 	}
+
+	// Apply min/max constraints
+	widths = applyColumnConstraints(widths, totalWidth)
+
 	return widths
+}
+
+// applyColumnConstraints ปรับ column widths ให้อยู่ใน min/max range
+func applyColumnConstraints(widths []float64, totalWidth float64) []float64 {
+	if len(widths) == 0 {
+		return widths
+	}
+
+	// Pass 1: Apply min/max และเก็บ overflow/underflow
+	adjusted := make([]float64, len(widths))
+	excess := 0.0
+
+	for idx, w := range widths {
+		if w < minColumnWidth {
+			excess -= (minColumnWidth - w)
+			adjusted[idx] = minColumnWidth
+		} else if w > maxColumnWidth {
+			excess += (w - maxColumnWidth)
+			adjusted[idx] = maxColumnWidth
+		} else {
+			adjusted[idx] = w
+		}
+	}
+
+	// Pass 2: กระจาย excess ไปยัง columns ที่ยังปรับได้
+	if excess != 0 {
+		adjustableCount := 0
+		for idx := range adjusted {
+			if adjusted[idx] > minColumnWidth && adjusted[idx] < maxColumnWidth {
+				adjustableCount++
+			}
+		}
+		if adjustableCount > 0 {
+			perColumn := excess / float64(adjustableCount)
+			for idx := range adjusted {
+				if adjusted[idx] > minColumnWidth && adjusted[idx] < maxColumnWidth {
+					newWidth := adjusted[idx] + perColumn
+					if newWidth < minColumnWidth {
+						newWidth = minColumnWidth
+					} else if newWidth > maxColumnWidth {
+						newWidth = maxColumnWidth
+					}
+					adjusted[idx] = newWidth
+				}
+			}
+		}
+	}
+
+	return adjusted
 }
 
 func groupRowsByAlias(rows []pdfResultRow) map[string][]pdfResultRow {
@@ -2414,7 +2646,7 @@ func orderRowsByHierarchy(rootAliasKeys []string, aliasChildren map[string][]str
 	return ordered
 }
 
-// sanitizeRowForJSON replaces NaN/Inf float values with nil so PostgreSQL JSONB accepts the payload
+// sanitizeRowForJSON replaces NaN/Inf float values with nil and cleans up string values
 func sanitizeRowForJSON(row map[string]any) {
 	for key, value := range row {
 		switch v := value.(type) {
@@ -2427,6 +2659,14 @@ func sanitizeRowForJSON(row map[string]any) {
 			if math.IsNaN(f) || math.IsInf(f, 0) {
 				row[key] = nil
 			}
+		case string:
+			// ลบ line breaks, carriage returns, และ tabs
+			cleaned := strings.ReplaceAll(v, "\n", " ")
+			cleaned = strings.ReplaceAll(cleaned, "\r", " ")
+			cleaned = strings.ReplaceAll(cleaned, "\t", " ")
+			// ลบช่องว่างที่ซ้ำกันและ trim
+			cleaned = strings.Join(strings.Fields(cleaned), " ")
+			row[key] = cleaned
 		}
 	}
 }
@@ -2774,6 +3014,40 @@ func (h *APIHandler) GeneratePDF(ctx context.Context, shopID, guid string, paylo
 	if len(resultRows) == 0 {
 		return "", fmt.Errorf("no data found for the given guid")
 	}
+
+	// Log PDF Config before rendering
+	log.Printf("========== PDF Generation Start - GUID: %s ==========", guid)
+	log.Printf("Total rows to render: %d", len(resultRows))
+	
+	// Log PDF Config
+	pdfConfigJSON, _ := json.MarshalIndent(payload.PDFConfig, "", "  ")
+	log.Printf("PDF Config:\n%s", string(pdfConfigJSON))
+	
+	// Log Layout Config if exists
+	if len(payload.LayoutConfig.Sections) > 0 {
+		log.Printf("Layout Config - Schema Version: %d", payload.LayoutConfig.SchemaVersion)
+		log.Printf("Layout Config - Number of Sections: %d", len(payload.LayoutConfig.Sections))
+		
+		for i, section := range payload.LayoutConfig.Sections {
+			sectionJSON, _ := json.MarshalIndent(section, "", "  ")
+			log.Printf("Section %d:\n%s", i+1, string(sectionJSON))
+		}
+		
+		if len(payload.LayoutConfig.ColumnSchema) > 0 {
+			columnSchemaJSON, _ := json.MarshalIndent(payload.LayoutConfig.ColumnSchema, "", "  ")
+			log.Printf("Column Schema:\n%s", string(columnSchemaJSON))
+		}
+		
+		if len(payload.LayoutConfig.NumberFormats) > 0 {
+			numberFormatsJSON, _ := json.MarshalIndent(payload.LayoutConfig.NumberFormats, "", "  ")
+			log.Printf("Number Formats:\n%s", string(numberFormatsJSON))
+		}
+		
+		stylesJSON, _ := json.MarshalIndent(payload.LayoutConfig.Styles, "", "  ")
+		log.Printf("Styles:\n%s", string(stylesJSON))
+	}
+	
+	log.Printf("========== Starting PDF Rendering ==========")
 
 	var (
 		pdfDoc    *gofpdf.Fpdf
