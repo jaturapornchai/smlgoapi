@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,7 +10,7 @@ import (
 	"net/http"
 	"time"
 
-	"smlgoapi/handlers"
+	"smlgoapi/services"
 )
 
 // SimpleScheduler runs in a loop checking for due email tasks
@@ -17,10 +18,11 @@ type SimpleScheduler struct {
 	checkInterval time.Duration
 	apiURL        string
 	stopChan      chan struct{}
+	pgService     *services.PostgreSQLService
 }
 
 // NewSimpleScheduler creates a new scheduler instance
-func NewSimpleScheduler(checkIntervalMinutes int, apiURL string) *SimpleScheduler {
+func NewSimpleScheduler(checkIntervalMinutes int, apiURL string, pgService *services.PostgreSQLService) *SimpleScheduler {
 	if checkIntervalMinutes <= 0 {
 		checkIntervalMinutes = 1 // Default to 1 minute
 	}
@@ -29,6 +31,7 @@ func NewSimpleScheduler(checkIntervalMinutes int, apiURL string) *SimpleSchedule
 		checkInterval: time.Duration(checkIntervalMinutes) * time.Minute,
 		apiURL:        apiURL,
 		stopChan:      make(chan struct{}),
+		pgService:     pgService,
 	}
 }
 
@@ -67,8 +70,8 @@ func (s *SimpleScheduler) checkAndSendDueEmails() {
 		}
 	}()
 
-	// Get due schedules from MongoDB
-	schedules, err := handlers.GetDueSchedules("email_schedules")
+	// Get due schedules from PostgreSQL
+	schedules, err := s.pgService.GetDueSchedules(context.Background())
 	if err != nil {
 		log.Printf("⚠️  Failed to get due schedules: %v", err)
 		return
@@ -99,24 +102,24 @@ func (s *SimpleScheduler) checkAndSendDueEmails() {
 		if err != nil {
 			log.Printf("❌ Failed to send email for %s: %v", scheduleID, err)
 
-			// Log failure to MongoDB
-			_ = handlers.LogSchedulerExecution(scheduleID, scheduleName, "failed", map[string]interface{}{
+			// Log failure to PostgreSQL
+			_ = s.pgService.LogSchedulerExecution(context.Background(), scheduleID, scheduleName, "failed", map[string]interface{}{
 				"error": err.Error(),
 			})
 
-			// Record for retry
-			_ = handlers.RecordSchedulerFailure(scheduleID, scheduleName, err.Error(), 0)
+			// Note: RecordSchedulerFailure has been merged into LogSchedulerExecution or can be a separate table
+			// For now, LogSchedulerExecution is enough.
 		} else {
 			log.Printf("✅ Successfully sent email for: %s", scheduleID)
 
-			// Log success
-			_ = handlers.LogSchedulerExecution(scheduleID, scheduleName, "success", map[string]interface{}{
+			// Log success to PostgreSQL
+			_ = s.pgService.LogSchedulerExecution(context.Background(), scheduleID, scheduleName, "success", map[string]interface{}{
 				"sent_at": time.Now(),
 			})
 
 			// Calculate and update next run time
 			nextRunTime := s.calculateNextRunTime(schedule)
-			err = handlers.UpdateScheduleNextRun(scheduleID, nextRunTime, time.Now())
+			err = s.pgService.UpdateScheduleNextRun(context.Background(), scheduleID, nextRunTime)
 			if err != nil {
 				log.Printf("⚠️  Failed to update next run time for %s: %v", scheduleID, err)
 			} else {

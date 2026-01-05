@@ -64,6 +64,24 @@ func setupRouter(apiHandler *handlers.APIHandler) *gin.Engine {
 		v1.POST("/resulttopdf", apiHandler.ResultToPDFHandler)
 		v1.POST("/sendreportemail", apiHandler.SendReportEmailHandler)
 
+		// System endpoints (PostgreSQL based)
+		v1.POST("/auth/login", apiHandler.AuthLoginHandler)
+		v1.POST("/auth/register", apiHandler.AuthRegisterHandler)
+		v1.POST("/system/user/upsert", apiHandler.UserUpsertHandler)
+		v1.POST("/system/user/delete", apiHandler.UserDeleteHandler)
+		v1.POST("/system/user/get", apiHandler.UserGetHandler)
+		v1.POST("/system/email-settings/get", apiHandler.EmailSettingsGetHandler)
+		v1.POST("/system/email-settings/upsert", apiHandler.EmailSettingsUpsertHandler)
+		v1.POST("/system/schedules/get", apiHandler.ScheduleGetHandler)
+		v1.POST("/system/schedules/get-by-report", apiHandler.GetSchedulesByReportHandler)
+		v1.POST("/system/schedules/upsert", apiHandler.ScheduleUpsertHandler)
+		v1.POST("/system/schedules/delete", apiHandler.ScheduleDeleteHandler)
+		v1.POST("/system/activity/log", apiHandler.ActivityLogHandler)
+		v1.POST("/system/activity/get", apiHandler.ActivityGetHandler)
+		v1.POST("/system/process-time/upsert", apiHandler.ProcessTimeUpsertHandler)
+		v1.POST("/system/process-time/get", apiHandler.ProcessTimeGetHandler)
+		v1.POST("/system/process-time/delete", apiHandler.ProcessTimeDeleteHandler)
+
 		// MongoDB Atlas endpoints
 		v1.POST("/mongoatlasupdate", handlers.MongoAtlasUpdateHandler) // Insert/Update (Upsert)
 		v1.POST("/mongoatlasdelete", handlers.MongoAtlasDeleteHandler) // Delete

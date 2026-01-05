@@ -62,7 +62,7 @@ func main() {
 		}
 
 		apiURL := "http://" + cfg.GetServerAddress()
-		scheduler = NewSimpleScheduler(checkInterval, apiURL)
+		scheduler = NewSimpleScheduler(checkInterval, apiURL, postgreSQLService)
 		go scheduler.Start()
 		log.Printf("✅ Email Scheduler started (checking every %d minute(s))", checkInterval)
 	} else {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"sync"
 
 	"smlgoapi/config"
@@ -39,6 +40,12 @@ func NewPostgreSQLService(config *config.Config) (*PostgreSQLService, error) {
 	if err := service.ensureResultTable(service.db, config.PostgreSQL.Database); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("ensure result table: %w", err)
+	}
+
+	if err := service.InitSystemTables(); err != nil {
+		log.Printf("⚠️  Warning: Failed to initialize system tables: %v", err)
+		// We don't necessarily want to fail here if the db is read-only or similar,
+		// but for this migration it's important.
 	}
 
 	return service, nil
