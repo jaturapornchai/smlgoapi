@@ -310,8 +310,8 @@ func (h *APIHandler) processQueryResults(ctx context.Context, shopID, guid strin
 		}
 	}
 
-	// Connect to database (ใช้ชื่อ database ตาม shopid)
-	db, err := h.postgreSQLService.GetDatabaseConnection(shopID)
+	// Connect to database (ใช้ POSTGRESQL_DATABASE จาก ENV config)
+	db, err := h.postgreSQLService.GetDefaultDatabaseConnection()
 	if err != nil {
 		return 0, fmt.Errorf("database connection failed: %w", err)
 	}
@@ -584,8 +584,8 @@ func (h *APIHandler) ResultGetHandler(c *gin.Context) {
 		payload.Limit = 1000
 	}
 
-	// Connect to database (ใช้ชื่อ database ตาม shopid)
-	db, err := h.postgreSQLService.GetDatabaseConnection(payload.ShopID)
+	// Connect to database (ใช้ POSTGRESQL_DATABASE จาก ENV config)
+	db, err := h.postgreSQLService.GetDefaultDatabaseConnection()
 	if err != nil {
 		log.Printf("Database connection error: %v", err)
 		c.JSON(http.StatusInternalServerError, map[string]string{
@@ -2948,8 +2948,8 @@ func (h *APIHandler) GeneratePDF(ctx context.Context, shopID, guid string, paylo
 		payload.PDFConfig.PageSize = "A4"
 	}
 
-	// Connect to database
-	db, err := h.postgreSQLService.GetDatabaseConnection(shopID)
+	// Connect to database (ใช้ POSTGRESQL_DATABASE จาก ENV config)
+	db, err := h.postgreSQLService.GetDefaultDatabaseConnection()
 	if err != nil {
 		return "", fmt.Errorf("database connection failed: %w", err)
 	}

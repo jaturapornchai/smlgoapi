@@ -55,6 +55,16 @@ func (s *PostgreSQLService) Close() error {
 	return s.db.Close()
 }
 
+// GetDefaultDatabaseName returns the database name configured via POSTGRESQL_DATABASE environment variable
+func (s *PostgreSQLService) GetDefaultDatabaseName() string {
+	return s.config.PostgreSQL.Database
+}
+
+// GetDefaultDatabaseConnection returns a connection to the default database configured via POSTGRESQL_DATABASE
+func (s *PostgreSQLService) GetDefaultDatabaseConnection() (*sql.DB, error) {
+	return s.GetDatabaseConnection(s.config.PostgreSQL.Database)
+}
+
 // GetDatabaseConnection creates a new connection to a specific database
 func (s *PostgreSQLService) GetDatabaseConnection(databaseName string) (*sql.DB, error) {
 	// Create DSN for specific database
