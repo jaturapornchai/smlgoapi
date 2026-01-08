@@ -1,88 +1,84 @@
 package services
 
 import (
-	"context"
-	"encoding/base64"
 	"fmt"
-	"os"
-	"path/filepath"
+	"log"
 
-	brevo "github.com/getbrevo/brevo-go/lib"
+	"gopkg.in/mail.v2"
+	"smlgoapi/config"
 )
 
+// EmailService handles sending emails via SMTP
 type EmailService struct {
-	client *brevo.APIClient
-	apiKey string
+	smtpHost     string
+	smtpPort     int
+	smtpUsername string
+	smtpPassword string
+	fromEmail    string
+	fromName     string
 }
 
-func NewEmailService(apiKey string) *EmailService {
-	cfg := brevo.NewConfiguration()
-	cfg.AddDefaultHeader("api-key", apiKey)
-	client := brevo.NewAPIClient(cfg)
+// NewEmailService สร้าง EmailService จาก Config
+func NewEmailService(cfg *config.Config) *EmailService {
 	return &EmailService{
-		client: client,
-		apiKey: apiKey,
+		smtpHost:     cfg.SMTP.Host,
+		smtpPort:     cfg.SMTP.Port,
+		smtpUsername: cfg.SMTP.Username,
+		smtpPassword: cfg.SMTP.Password,
+		fromEmail:    cfg.SMTP.FromEmail,
+		fromName:     cfg.SMTP.FromName,
 	}
 }
 
-func (s *EmailService) SendEmailWithAttachment(to []string, cc []string, bcc []string, subject, htmlContent, attachmentPath, senderName string) error {
-	// Read attachment file
-	fileContent, err := os.ReadFile(attachmentPath)
-	if err != nil {
-		return fmt.Errorf("failed to read attachment file: %w", err)
-	}
+// SendEmailWithAttachment ส่ง Email พร้อม Attachment ผ่าน SMTP
+func (s *EmailService) SendEmailWithAttachment(
+	to []string, cc []string, bcc []string,
+	subject, htmlContent, attachmentPath, senderName string,
+) error {
+	// Logging - ก่อนส่ง
+	log.Printf("[EMAIL] Sending email to: %v", to)
+	log.Printf("[EMAIL] Subject: %s", subject)
+	log.Printf("[EMAIL] Attachment: %s", attachmentPath)
+	log.Printf("[EMAIL] SMTP Host: %s:%d", s.smtpHost, s.smtpPort)
 
-	// Encode content to base64
-	encodedContent := base64.StdEncoding.EncodeToString(fileContent)
-	fileName := filepath.Base(attachmentPath)
+	// สร้าง Message
+	m := mail.NewMessage()
 
-	// Create attachment object
-	attachment := brevo.SendSmtpEmailAttachment{
-		Name:    fileName,
-		Content: encodedContent,
-	}
-
-	// Create sender with custom name
+	// ตั้งค่า Sender Name
 	if senderName == "" {
-		senderName = "SML Email Service"
+		senderName = s.fromName
 	}
-	sender := &brevo.SendSmtpEmailSender{
-		Name:  senderName,
-		Email: "noreply@bcaccount.com",
+	m.SetAddressHeader("From", s.fromEmail, senderName)
+
+	// ตั้งค่า Recipients
+	m.SetHeader("To", to...)
+	if len(cc) > 0 {
+		m.SetHeader("Cc", cc...)
+	}
+	if len(bcc) > 0 {
+		m.SetHeader("Bcc", bcc...)
 	}
 
-	// Create recipients
-	toList := make([]brevo.SendSmtpEmailTo, len(to))
-	for i, email := range to {
-		toList[i] = brevo.SendSmtpEmailTo{Email: email}
+	// ตั้งค่า Content
+	m.SetHeader("Subject", subject)
+	m.SetBody("text/html", htmlContent)
+
+	// แนบไฟล์
+	if attachmentPath != "" {
+		m.Attach(attachmentPath)
 	}
 
-	ccList := make([]brevo.SendSmtpEmailCc, len(cc))
-	for i, email := range cc {
-		ccList[i] = brevo.SendSmtpEmailCc{Email: email}
-	}
+	// สร้าง SMTP Dialer และส่ง
+	d := mail.NewDialer(s.smtpHost, s.smtpPort, s.smtpUsername, s.smtpPassword)
 
-	bccList := make([]brevo.SendSmtpEmailBcc, len(bcc))
-	for i, email := range bcc {
-		bccList[i] = brevo.SendSmtpEmailBcc{Email: email}
-	}
+	err := d.DialAndSend(m)
 
-	// Create email content
-	emailContent := brevo.SendSmtpEmail{
-		Sender:      sender,
-		To:          toList,
-		Cc:          ccList,
-		Bcc:         bccList,
-		Subject:     subject,
-		HtmlContent: htmlContent,
-		Attachment:  []brevo.SendSmtpEmailAttachment{attachment},
-	}
-
-	// Send email
-	_, resp, err := s.client.TransactionalEmailsApi.SendTransacEmail(context.Background(), emailContent)
+	// Logging - ผลลัพธ์
 	if err != nil {
-		return fmt.Errorf("failed to send email: %w (response: %v)", err, resp)
+		log.Printf("[EMAIL] Failed: %v", err)
+		return fmt.Errorf("failed to send email via SMTP: %w", err)
 	}
 
+	log.Printf("[EMAIL] Success: sent to %v", to)
 	return nil
 }

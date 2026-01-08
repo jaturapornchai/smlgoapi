@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/joho/godotenv"
 )
@@ -53,9 +54,15 @@ type Config struct {
 		Password string `json:"password"`
 		Database string `json:"database"`
 	} `json:"clickhouse"`
-	Email struct {
-		APIKey string `json:"api_key"`
-	} `json:"email"`
+	// SMTP configuration (replaces Email.APIKey)
+	SMTP struct {
+		Host      string `json:"host"`
+		Port      int    `json:"port"`
+		Username  string `json:"username"`
+		Password  string `json:"password"`
+		FromEmail string `json:"from_email"`
+		FromName  string `json:"from_name"`
+	} `json:"smtp"`
 }
 
 // JSONConfig represents the structure of smlgoapi.json
@@ -79,9 +86,14 @@ type JSONConfig struct {
 		Password string `json:"password"`
 		Database string `json:"database"`
 	} `json:"clickhouse"`
-	Email struct {
-		APIKey string `json:"api_key"`
-	} `json:"email"`
+	SMTP struct {
+		Host      string `json:"host"`
+		Port      int    `json:"port"`
+		Username  string `json:"username"`
+		Password  string `json:"password"`
+		FromEmail string `json:"from_email"`
+		FromName  string `json:"from_name"`
+	} `json:"smtp"`
 	// Alternative field name for backward compatibility
 	Postgres struct {
 		Host     string `json:"host"`
@@ -129,8 +141,13 @@ func LoadConfig() *Config {
 		config.ClickHouse.Password = jsonConfig.ClickHouse.Password
 		config.ClickHouse.Database = jsonConfig.ClickHouse.Database
 
-		// Email configuration
-		config.Email.APIKey = jsonConfig.Email.APIKey
+		// SMTP configuration
+		config.SMTP.Host = jsonConfig.SMTP.Host
+		config.SMTP.Port = jsonConfig.SMTP.Port
+		config.SMTP.Username = jsonConfig.SMTP.Username
+		config.SMTP.Password = jsonConfig.SMTP.Password
+		config.SMTP.FromEmail = jsonConfig.SMTP.FromEmail
+		config.SMTP.FromName = jsonConfig.SMTP.FromName
 
 		return config
 	}
@@ -161,8 +178,13 @@ func LoadConfig() *Config {
 	config.ClickHouse.Password = getEnv("CLICKHOUSE_PASSWORD", "")
 	config.ClickHouse.Database = getEnv("CLICKHOUSE_DATABASE", "default")
 
-	// Email configuration
-	config.Email.APIKey = getEnv("EMAIL_API_KEY", "")
+	// SMTP configuration
+	config.SMTP.Host = getEnv("SMTP_HOST", "smtp.brevo.com")
+	config.SMTP.Port = getEnvAsInt("SMTP_PORT", 587)
+	config.SMTP.Username = getEnv("SMTP_USERNAME", "")
+	config.SMTP.Password = getEnv("SMTP_PASSWORD", "")
+	config.SMTP.FromEmail = getEnv("SMTP_FROM_EMAIL", "noreply@bcaccount.com")
+	config.SMTP.FromName = getEnv("SMTP_FROM_NAME", "SML Email Service")
 
 	return config
 }
@@ -224,6 +246,15 @@ func (c *Config) GetServerAddress() string {
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return defaultValue
+}
+
+func getEnvAsInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		if intVal, err := strconv.Atoi(value); err == nil {
+			return intVal
+		}
 	}
 	return defaultValue
 }

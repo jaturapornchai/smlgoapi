@@ -43,8 +43,8 @@ func NewAPIHandler(postgreSQLService *services.PostgreSQLService) *APIHandler {
 		clickHouseService = chs
 	}
 
-	// Initialize Email service
-	emailService := services.NewEmailService(cfg.Email.APIKey)
+	// Initialize Email service (SMTP)
+	emailService := services.NewEmailService(cfg)
 
 	return &APIHandler{
 		postgreSQLService: postgreSQLService,

@@ -487,6 +487,37 @@ func (s *PostgreSQLService) DeleteSchedule(ctx context.Context, id string) error
 	return err
 }
 
+// GetScheduleByID retrieves a single schedule by its ID
+func (s *PostgreSQLService) GetScheduleByID(ctx context.Context, scheduleID string) (map[string]interface{}, error) {
+	var result = make(map[string]interface{})
+	var id, pattern string
+	var name, shop, report sql.NullString
+	var nextRun interface{}
+	var interval int
+
+	err := s.db.QueryRowContext(ctx,
+		`SELECT schedule_id, schedule_name, shop_id, report_id, schedule_pattern, next_run_at, interval_minutes 
+		 FROM sys_email_schedules WHERE schedule_id = $1`,
+		scheduleID).Scan(&id, &name, &shop, &report, &pattern, &nextRun, &interval)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	result["schedule_id"] = id
+	result["schedule_name"] = name.String
+	result["shop_id"] = shop.String
+	result["report_id"] = report.String
+	result["schedule_pattern"] = pattern
+	result["next_run_at"] = nextRun
+	result["interval_minutes"] = interval
+
+	return result, nil
+}
+
 // LogUserAction logs user-related activity to user_logs table
 func (s *PostgreSQLService) LogUserAction(ctx context.Context, username, action string, success bool, ipAddress, userAgent, errorMessage string) error {
 	_, err := s.db.ExecContext(ctx, `

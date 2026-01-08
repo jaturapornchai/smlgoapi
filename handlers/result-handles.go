@@ -3070,7 +3070,223 @@ func (h *APIHandler) GeneratePDF(ctx context.Context, shopID, guid string, paylo
 
 // SendReportEmailHandler handles generating a report PDF and sending it via email
 func (h *APIHandler) SendReportEmailHandler(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, gin.H{"error": "Email scheduling not yet migrated to PostgreSQL"})
+	log.Println("-> SendReportEmailHandler called")
+
+	// Parse request body
+	var req struct {
+		ShopID     string `json:"shopid"`
+		ScheduleID string `json:"schedule_id"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
+		return
+	}
+
+	if req.ShopID == "" || req.ScheduleID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing shopid or schedule_id"})
+		return
+	}
+
+	log.Printf("[SendReportEmail] Processing schedule_id=%s shopid=%s", req.ScheduleID, req.ShopID)
+
+	// Get schedule from PostgreSQL
+	schedule, err := h.postgreSQLService.GetScheduleByID(c.Request.Context(), req.ScheduleID)
+	if err != nil {
+		log.Printf("[SendReportEmail] Error getting schedule: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get schedule: " + err.Error()})
+		return
+	}
+
+	if schedule == nil {
+		log.Printf("[SendReportEmail] Schedule not found: %s", req.ScheduleID)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Schedule not found"})
+		return
+	}
+
+	log.Printf("[SendReportEmail] Schedule data: %+v", schedule)
+
+	// Parse schedule_pattern JSON
+	patternJSON, _ := schedule["schedule_pattern"].(string)
+	log.Printf("[SendReportEmail] Pattern JSON length: %d", len(patternJSON))
+	if patternJSON == "" {
+		log.Printf("[SendReportEmail] ERROR: schedule_pattern is empty")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Schedule has no pattern configuration"})
+		return
+	}
+
+	var scheduleConfig struct {
+		DatePreset    string      `json:"date_preset"`
+		Recipients    []string    `json:"recipients"`
+		CCRecipients  []string    `json:"cc_recipients"`
+		EmailSubject  string      `json:"email_subject"`
+		IncludePDF    bool        `json:"include_pdf"`
+		QueryConfig   interface{} `json:"query_config"`
+		PDFConfig     interface{} `json:"pdf_config"`
+	}
+
+	if err := json.Unmarshal([]byte(patternJSON), &scheduleConfig); err != nil {
+		log.Printf("[SendReportEmail] Error parsing schedule_pattern: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse schedule configuration"})
+		return
+	}
+
+	log.Printf("[SendReportEmail] Parsed config - Recipients: %v, CCRecipients: %v, DatePreset: %s", 
+		scheduleConfig.Recipients, scheduleConfig.CCRecipients, scheduleConfig.DatePreset)
+
+	// Validate recipients
+	if len(scheduleConfig.Recipients) == 0 {
+		log.Printf("[SendReportEmail] ERROR: No recipients configured")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No recipients configured for this schedule"})
+		return
+	}
+
+	// Calculate date range from preset
+	startDate, endDate := calculateDateRange(scheduleConfig.DatePreset)
+	log.Printf("[SendReportEmail] Date range: %s to %s (preset=%s)", 
+		startDate.Format("2006-01-02"), endDate.Format("2006-01-02"), scheduleConfig.DatePreset)
+
+	// Extract and parse query_config
+	var queryConfigPayload struct {
+		ShopID     string      `json:"shopid"`
+		QueryItems []QueryItem `json:"query_items"`
+	}
+	
+	queryConfigBytes, _ := json.Marshal(scheduleConfig.QueryConfig)
+	if err := json.Unmarshal(queryConfigBytes, &queryConfigPayload); err != nil {
+		log.Printf("[SendReportEmail] Error parsing query_config: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse query configuration"})
+		return
+	}
+
+	// Replace date placeholders in queries
+	for i := range queryConfigPayload.QueryItems {
+		query := queryConfigPayload.QueryItems[i].Query
+		query = strings.ReplaceAll(query, "{{start_date}}", startDate.Format("2006-01-02"))
+		query = strings.ReplaceAll(query, "{{end_date}}", endDate.Format("2006-01-02"))
+		queryConfigPayload.QueryItems[i].Query = query
+	}
+
+	// Generate GUID for this run
+	guid := uuid.New().String()
+	log.Printf("[SendReportEmail] Processing queries with guid=%s", guid)
+
+	// Execute queries and store results
+	count, err := h.processQueryResults(c.Request.Context(), req.ShopID, guid, queryConfigPayload.QueryItems)
+	if err != nil {
+		log.Printf("[SendReportEmail] Error processing queries: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process queries: " + err.Error()})
+		return
+	}
+
+	log.Printf("[SendReportEmail] Query processing complete: %d rows", count)
+
+	// Parse and prepare PDF config
+	var pdfPayload resultToPDFPayload
+	pdfConfigBytes, _ := json.Marshal(scheduleConfig.PDFConfig)
+	
+	// Unmarshal pdf_config into pdfPayload
+	var pdfConfigRaw struct {
+		ShopID       string          `json:"shopid"`
+		PDFConfig    PDFConfig       `json:"pdf_config"`
+		LayoutConfig PDFLayoutConfig `json:"layout_config"`
+	}
+	if err := json.Unmarshal(pdfConfigBytes, &pdfConfigRaw); err != nil {
+		log.Printf("[SendReportEmail] Error parsing pdf_config: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse PDF configuration"})
+		return
+	}
+
+	// Replace date placeholders in PDF config description
+	pdfTitle := pdfConfigRaw.PDFConfig.Title
+	pdfDesc := pdfConfigRaw.PDFConfig.Description
+	pdfDesc = strings.ReplaceAll(pdfDesc, "{{thai_start_date}}", formatThaiDate(startDate))
+	pdfDesc = strings.ReplaceAll(pdfDesc, "{{thai_end_date}}", formatThaiDate(endDate))
+	pdfDesc = strings.ReplaceAll(pdfDesc, "{{start_date}}", startDate.Format("02/01/2006"))
+	pdfDesc = strings.ReplaceAll(pdfDesc, "{{end_date}}", endDate.Format("02/01/2006"))
+
+	pdfPayload = resultToPDFPayload{
+		ShopID: req.ShopID,
+		Guid:   guid,
+		PDFConfig: PDFConfig{
+			Title:            pdfTitle,
+			Description:      pdfDesc,
+			TitleAlign:       pdfConfigRaw.PDFConfig.TitleAlign,
+			DescriptionAlign: pdfConfigRaw.PDFConfig.DescriptionAlign,
+			Orientation:      pdfConfigRaw.PDFConfig.Orientation,
+			PageSize:         pdfConfigRaw.PDFConfig.PageSize,
+		},
+		LayoutConfig: pdfConfigRaw.LayoutConfig,
+	}
+
+	// Generate PDF
+	pdfPath := ""
+	if scheduleConfig.IncludePDF {
+		log.Printf("[SendReportEmail] Generating PDF for guid=%s", guid)
+		generatedPath, err := h.GeneratePDF(c.Request.Context(), req.ShopID, guid, pdfPayload)
+		if err != nil {
+			log.Printf("[SendReportEmail] Error generating PDF: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate PDF: " + err.Error()})
+			return
+		}
+		pdfPath = generatedPath
+		log.Printf("[SendReportEmail] PDF generated: %s", pdfPath)
+	}
+
+	// Prepare email content
+	emailSubject := scheduleConfig.EmailSubject
+	if emailSubject == "" {
+		emailSubject = "รายงาน " + pdfTitle
+	}
+
+	// Build HTML email body
+	htmlContent := fmt.Sprintf(`
+		<html>
+		<body style="font-family: 'Sarabun', sans-serif; color: #333;">
+			<h2>%s</h2>
+			<p>%s</p>
+			<p>ข้อมูล ณ วันที่ %s</p>
+			<hr/>
+			<p style="color: #666; font-size: 12px;">
+				อีเมลนี้ถูกส่งอัตโนมัติจากระบบ Smart Report
+			</p>
+		</body>
+		</html>
+	`, pdfTitle, pdfDesc, time.Now().Format("02/01/2006 15:04"))
+
+	// Send email via SMTP
+	log.Printf("[SendReportEmail] Sending email to: %v", scheduleConfig.Recipients)
+	emailService := h.GetEmailService()
+	err = emailService.SendEmailWithAttachment(
+		scheduleConfig.Recipients,
+		scheduleConfig.CCRecipients,
+		nil, // bcc
+		emailSubject,
+		htmlContent,
+		pdfPath,
+		"", // use default sender name
+	)
+
+	if err != nil {
+		log.Printf("[SendReportEmail] Error sending email: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send email: " + err.Error()})
+		return
+	}
+
+	log.Printf("[SendReportEmail] Email sent successfully to %d recipients", len(scheduleConfig.Recipients))
+
+	// Clean up PDF file after sending (optional - keep for debugging)
+	// if pdfPath != "" {
+	// 	os.Remove(pdfPath)
+	// }
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":     "success",
+		"message":    fmt.Sprintf("Email sent successfully to %d recipients", len(scheduleConfig.Recipients)),
+		"guid":       guid,
+		"recipients": scheduleConfig.Recipients,
+		"row_count":  count,
+	})
 }
 
 /*
