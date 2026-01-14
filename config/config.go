@@ -204,6 +204,9 @@ func LoadConfig() *Config {
 		// No, stick to env key. User provided: POSTGRESQL_SYSTEM_PASSWORD
 		config.PostgreSQLSystem.Password = getEnv("POSTGRESQL_SYSTEM_PASSWORD", config.PostgreSQL.Password)
 	}
+	config.PostgreSQLSystem.Database = getEnv("POSTGRESQL_SYSTEM_DATABASE", config.PostgreSQL.Database)
+	config.PostgreSQLSystem.SSLMode = getEnv("POSTGRESQL_SYSTEM_SSLMODE", config.PostgreSQL.SSLMode)
+
 	return config
 }
 
