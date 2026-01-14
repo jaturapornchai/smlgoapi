@@ -3010,7 +3010,7 @@ func (h *APIHandler) GeneratePDF(ctx context.Context, shopID, guid string, paylo
 	}
 
 	if len(resultRows) == 0 {
-		return "", fmt.Errorf("no data found for the given guid")
+		log.Printf("[GeneratePDF] No data found for guid=%s, generating empty PDF with headers only", guid)
 	}
 
 	// Log PDF Config before rendering

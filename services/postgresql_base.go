@@ -76,6 +76,8 @@ func (s *PostgreSQLService) GetDatabaseConnection(databaseName string) (*sql.DB,
 		s.config.PostgreSQL.Password,
 		databaseName)
 
+	log.Printf("DEBUG GetDatabaseConnection: User=%s, PasswordSet=%v, DB=%s", s.config.PostgreSQL.User, s.config.PostgreSQL.Password != "", databaseName)
+
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open PostgreSQL connection to database '%s': %w", databaseName, err)
