@@ -47,6 +47,14 @@ type Config struct {
 		Database string `json:"database"`
 		SSLMode  string `json:"sslmode"`
 	} `json:"postgresql"`
+	PostgreSQLSystem struct {
+		Host     string `json:"host"`
+		Port     string `json:"port"`
+		User     string `json:"user"`
+		Password string `json:"password"`
+		Database string `json:"database"`
+		SSLMode  string `json:"sslmode"`
+	} `json:"postgresql_system"`
 	ClickHouse struct {
 		Host     string `json:"host"`
 		Port     string `json:"port"`
@@ -186,6 +194,16 @@ func LoadConfig() *Config {
 	config.SMTP.FromEmail = getEnv("SMTP_FROM_EMAIL", "noreply@bcaccount.com")
 	config.SMTP.FromName = getEnv("SMTP_FROM_NAME", "SML Email Service")
 
+	// PostgreSQL System configuration (Admin/Write)
+	config.PostgreSQLSystem.Host = getEnv("POSTGRESQL_SYSTEM_HOST", config.PostgreSQL.Host)
+	config.PostgreSQLSystem.Port = getEnv("POSTGRESQL_SYSTEM_PORT", config.PostgreSQL.Port)
+	config.PostgreSQLSystem.User = getEnv("POSTGRESQL_SYSTEM_USER", config.PostgreSQL.User)
+	config.PostgreSQLSystem.Password = getEnv("POSTGRESQL_SYSTEM_Password", config.PostgreSQL.Password)
+	if config.PostgreSQLSystem.Password == "" {
+		// Try uppercase P if lowercase failed (user provided 'Password' vs 'PASSWORD' in some envs) OR fallback to sml default?
+		// No, stick to env key. User provided: POSTGRESQL_SYSTEM_PASSWORD
+		config.PostgreSQLSystem.Password = getEnv("POSTGRESQL_SYSTEM_PASSWORD", config.PostgreSQL.Password)
+	}
 	return config
 }
 
@@ -226,6 +244,17 @@ func (c *Config) GetPostgreSQLDSN() string {
 		c.PostgreSQL.Port,
 		c.PostgreSQL.Database,
 		c.PostgreSQL.SSLMode,
+	)
+}
+
+func (c *Config) GetPostgreSQLSystemDSN() string {
+	return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
+		c.PostgreSQLSystem.User,
+		c.PostgreSQLSystem.Password,
+		c.PostgreSQLSystem.Host,
+		c.PostgreSQLSystem.Port,
+		c.PostgreSQLSystem.Database,
+		c.PostgreSQLSystem.SSLMode,
 	)
 }
 

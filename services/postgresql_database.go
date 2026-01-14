@@ -90,8 +90,8 @@ func (s *PostgreSQLService) CheckAndCreateTable(ctx context.Context, databaseNam
 
 // CheckAndCreateAllTables scans all SQL files in sql/postgresql/ folder and creates missing tables
 func (s *PostgreSQLService) CheckAndCreateAllTables(ctx context.Context, databaseName string) (map[string]interface{}, error) {
-	// Get connection to specific database
-	db, err := s.GetDatabaseConnection(databaseName)
+	// Get connection to specific database (Use System Connection for creating tables)
+	db, err := s.GetSystemDatabaseConnection(databaseName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database '%s': %w", databaseName, err)
 	}

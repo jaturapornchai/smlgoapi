@@ -21,7 +21,8 @@ type PostgreSQLService struct {
 }
 
 func NewPostgreSQLService(config *config.Config) (*PostgreSQLService, error) {
-	db, err := sql.Open("postgres", config.GetPostgreSQLDSN())
+	// Use System DSN for the main service connection (for internal admin tasks like InitSystemTables, UpsertUser)
+	db, err := sql.Open("postgres", config.GetPostgreSQLSystemDSN())
 	if err != nil {
 		return nil, fmt.Errorf("failed to open PostgreSQL connection: %w", err)
 	}
@@ -86,6 +87,36 @@ func (s *PostgreSQLService) GetDatabaseConnection(databaseName string) (*sql.DB,
 		return nil, fmt.Errorf("failed to ping PostgreSQL database '%s': %w", databaseName, err)
 	}
 
+	if err := s.ensureResultTable(db, databaseName); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("ensure result table: %w", err)
+	}
+
+	return db, nil
+}
+
+// GetSystemDatabaseConnection creates a new connection to a specific database using System (Admin) credentials
+func (s *PostgreSQLService) GetSystemDatabaseConnection(databaseName string) (*sql.DB, error) {
+	// Create DSN for specific database using System credentials
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		s.config.PostgreSQLSystem.Host,
+		s.config.PostgreSQLSystem.Port,
+		s.config.PostgreSQLSystem.User,
+		s.config.PostgreSQLSystem.Password,
+		databaseName)
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open PostgreSQL system connection to database '%s': %w", databaseName, err)
+	}
+
+	// Test connection
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to ping PostgreSQL system database '%s': %w", databaseName, err)
+	}
+
+	// Ensure result table exists (using system connection is safe)
 	if err := s.ensureResultTable(db, databaseName); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("ensure result table: %w", err)

@@ -39,8 +39,8 @@ func (h *APIHandler) PgCommandEndpoint(c *gin.Context) {
 
 	log.Printf("🎯 [pgcommand] Executing PostgreSQL command in database '%s': %s", commandReq.DatabaseName, commandReq.Query)
 
-	// Get connection to specific database
-	db, err := h.postgreSQLService.GetDatabaseConnection(commandReq.DatabaseName)
+	// Get connection to specific database (Use System Connection for Commands/Writes)
+	db, err := h.postgreSQLService.GetSystemDatabaseConnection(commandReq.DatabaseName)
 	if err != nil {
 		log.Printf("❌ [pgcommand] Database connection failed: %v", err)
 		c.JSON(http.StatusInternalServerError, models.CommandResponse{
