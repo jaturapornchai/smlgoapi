@@ -198,7 +198,7 @@ func LoadConfig() *Config {
 	config.PostgreSQLSystem.Host = getEnv("POSTGRESQL_SYSTEM_HOST", config.PostgreSQL.Host)
 	config.PostgreSQLSystem.Port = getEnv("POSTGRESQL_SYSTEM_PORT", config.PostgreSQL.Port)
 	config.PostgreSQLSystem.User = getEnv("POSTGRESQL_SYSTEM_USER", config.PostgreSQL.User)
-	config.PostgreSQLSystem.Password = getEnv("POSTGRESQL_SYSTEM_Password", config.PostgreSQL.Password)
+	config.PostgreSQLSystem.Password = getEnv("POSTGRESQL_SYSTEM_PASSWORD", config.PostgreSQL.Password)
 	if config.PostgreSQLSystem.Password == "" {
 		// Try uppercase P if lowercase failed (user provided 'Password' vs 'PASSWORD' in some envs) OR fallback to sml default?
 		// No, stick to env key. User provided: POSTGRESQL_SYSTEM_PASSWORD
